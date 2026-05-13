@@ -1,4 +1,6 @@
 import "dotenv/config"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 import express, { Request, Response } from "express"
 import evolutionWebhook from "./webhooks/evolution.js"
 import authRouter from "./routes/auth.js"
@@ -134,11 +136,16 @@ app.post("/workers/trigger", async (req: Request, res: Response) => {
   }
 })
 
-// ─── 404 ─────────────────────────────────────────────────────────────────────
+// ─── Static (production) ─────────────────────────────────────────────────────
 
-app.use((_req, res) => {
-  res.status(404).json({ error: "Not found" })
-})
+if (process.env.NODE_ENV === "production") {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url))
+  const distPath  = path.resolve(__dirname, "../dist")
+  app.use(express.static(distPath))
+  app.get("*", (_req, res) => res.sendFile(path.join(distPath, "index.html")))
+} else {
+  app.use((_req, res) => res.status(404).json({ error: "Not found" }))
+}
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
