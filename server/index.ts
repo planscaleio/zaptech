@@ -21,10 +21,12 @@ import businessAccountsRouter from "./routes/business-accounts.js"
 import auditoriasRouter from "./routes/auditorias.js"
 import settingsRouter from "./routes/settings.js"
 import agentsRouter from "./routes/agents.js"
+import { Router } from "express"
 import { db } from "./db.js"
 import { startWorkers, runSegmentSync, runCardScore, runStageSync, runAiScore, runInboundProcessor, runOutboundSender, runOutboundRecovery, runAssignmentRecovery } from "./workers/index.js"
 
 const app = express()
+const api = Router()
 const PORT = Number(process.env.PORT ?? 3002)
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
@@ -40,33 +42,38 @@ app.use((req, _res, next) => {
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
+// Health check — fora do prefixo /api para EasyPanel/Docker
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() })
 })
 
-app.use("/auth", authRouter)
-app.use("/conversations", conversationsRouter)
-app.use("/customers", customersRouter)
-app.use("/ai", aiRouter)
-app.use("/pipelines", pipelinesRouter)
-app.use("/segments", segmentsRouter)
-app.use("/teams", teamsRouter)
-app.use("/campaigns", campaignsRouter)
-app.use("/knowledge", knowledgeRouter)
-app.use("/product-categories", productCategoriesRouter)
-app.use("/products", productsRouter)
-app.use("/quotes", quotesRouter)
-app.use("/dynamic-links", dynamicLinksRouter)
-app.use("/support-tickets", supportTicketsRouter)
-app.use("/business-accounts", businessAccountsRouter)
-app.use("/auditorias", auditoriasRouter)
-app.use("/settings", settingsRouter)
-app.use("/agents", agentsRouter)
+// Webhook e links públicos — fora do prefixo /api
 app.use("/webhook/evolution", evolutionWebhook)
 app.use("/r", publicDynamicRedirectRouter)
 
-// GET /tags?companyId=  — lista todas as tags da empresa
-app.get("/tags", async (req: Request, res: Response) => {
+// ─── API routes (prefixo /api) ────────────────────────────────────────────────
+
+api.use("/auth", authRouter)
+api.use("/conversations", conversationsRouter)
+api.use("/customers", customersRouter)
+api.use("/ai", aiRouter)
+api.use("/pipelines", pipelinesRouter)
+api.use("/segments", segmentsRouter)
+api.use("/teams", teamsRouter)
+api.use("/campaigns", campaignsRouter)
+api.use("/knowledge", knowledgeRouter)
+api.use("/product-categories", productCategoriesRouter)
+api.use("/products", productsRouter)
+api.use("/quotes", quotesRouter)
+api.use("/dynamic-links", dynamicLinksRouter)
+api.use("/support-tickets", supportTicketsRouter)
+api.use("/business-accounts", businessAccountsRouter)
+api.use("/auditorias", auditoriasRouter)
+api.use("/settings", settingsRouter)
+api.use("/agents", agentsRouter)
+
+// GET /api/tags?companyId=
+api.get("/tags", async (req: Request, res: Response) => {
   const { companyId } = req.query
   if (!companyId || typeof companyId !== "string") {
     return res.status(400).json({ error: "companyId é obrigatório" })
@@ -81,8 +88,7 @@ app.get("/tags", async (req: Request, res: Response) => {
 
 // ─── Worker audit routes ──────────────────────────────────────────────────────
 
-// GET /workers/runs?worker=&status=&limit=
-app.get("/workers/runs", async (req: Request, res: Response) => {
+api.get("/workers/runs", async (req: Request, res: Response) => {
   const { worker, status, companyId, limit = "50" } = req.query
   const where: Record<string, unknown> = {}
   if (worker && typeof worker === "string") where.worker = worker
@@ -103,8 +109,7 @@ app.get("/workers/runs", async (req: Request, res: Response) => {
   return res.json(runs)
 })
 
-// GET /workers/runs/:runId — run detail with logs
-app.get("/workers/runs/:runId", async (req: Request, res: Response) => {
+api.get("/workers/runs/:runId", async (req: Request, res: Response) => {
   const run = await db.workerRun.findUnique({
     where: { id: req.params.runId },
     include: { logs: { orderBy: { createdAt: "asc" } } },
@@ -113,8 +118,7 @@ app.get("/workers/runs/:runId", async (req: Request, res: Response) => {
   return res.json(run)
 })
 
-// POST /workers/trigger — manually trigger a worker
-app.post("/workers/trigger", async (req: Request, res: Response) => {
+api.post("/workers/trigger", async (req: Request, res: Response) => {
   const { worker, companyId, meta } = req.body ?? {}
   const ctx = { companyId, meta }
   let runId: string
@@ -135,6 +139,8 @@ app.post("/workers/trigger", async (req: Request, res: Response) => {
     return res.status(500).json({ error: err instanceof Error ? err.message : String(err) })
   }
 })
+
+app.use("/api", api)
 
 // ─── Static (production) ─────────────────────────────────────────────────────
 

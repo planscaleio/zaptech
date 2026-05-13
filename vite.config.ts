@@ -13,10 +13,13 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: "http://localhost:3100",
-        rewrite: (path) => path.replace(/^\/api/, ""),
         changeOrigin: true,
       },
       "/r/": {
+        target: "http://localhost:3100",
+        changeOrigin: true,
+      },
+      "/webhook": {
         target: "http://localhost:3100",
         changeOrigin: true,
       },
