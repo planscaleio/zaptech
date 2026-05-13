@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express"
 import { db } from "../db.js"
 import { resolveAttendant, assignConversation } from "../lib/distributionEngine.js"
+import { sendEmailReply } from "../lib/email-service.js"
 
 const router = Router()
 
@@ -147,6 +148,8 @@ router.post("/:id/reply", async (req: Request, res: Response) => {
       id: true,
       companyId: true,
       channel: true,
+      preview: true,
+      emailAccountId: true,
       customer: { select: { phone: true, email: true } },
     },
   })
@@ -154,6 +157,16 @@ router.post("/:id/reply", async (req: Request, res: Response) => {
   if (!conversation) return res.status(404).json({ error: "Conversa não encontrada" })
 
   if (conversation.channel === "EMAIL") {
+    if (!conversation.emailAccountId) return res.status(422).json({ error: "Conversa sem conta de e-mail vinculada" })
+    if (!conversation.customer?.email) return res.status(422).json({ error: "Cliente sem e-mail cadastrado" })
+
+    await sendEmailReply({
+      emailAccountId: conversation.emailAccountId,
+      to: conversation.customer.email,
+      body: text.trim(),
+      subject: conversation.preview?.split(":")[0] || "Re: Atendimento",
+    })
+
     const now = new Date()
     const message = await db.message.create({
       data: {
@@ -181,7 +194,7 @@ router.post("/:id/reply", async (req: Request, res: Response) => {
         status: "AGUARDANDO",
       },
     })
-    return res.status(201).json({ local: true, message })
+    return res.status(201).json({ sent: true, message })
   }
 
   if (!conversation.customer?.phone) return res.status(422).json({ error: "Cliente sem telefone cadastrado" })

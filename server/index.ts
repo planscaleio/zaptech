@@ -24,7 +24,7 @@ import agentsRouter from "./routes/agents.js"
 import adminRouter from "./routes/admin.js"
 import { Router } from "express"
 import { db } from "./db.js"
-import { startWorkers, runSegmentSync, runCardScore, runStageSync, runAiScore, runInboundProcessor, runOutboundSender, runOutboundRecovery, runAssignmentRecovery } from "./workers/index.js"
+import { startWorkers, runSegmentSync, runCardScore, runStageSync, runAiScore, runInboundProcessor, runOutboundSender, runOutboundRecovery, runAssignmentRecovery, runEmailSync } from "./workers/index.js"
 
 const app = express()
 const api = Router()
@@ -128,6 +128,7 @@ api.post("/workers/trigger", async (req: Request, res: Response) => {
       case "inbound-processor":  runId = await runInboundProcessor("manual", ctx);  break
       case "outbound-sender":    runId = await runOutboundSender("manual", ctx);    break
       case "outbound-recovery":  runId = await runOutboundRecovery("manual", ctx);  break
+      case "email-sync":         runId = await runEmailSync("manual", ctx);         break
       case "segment-sync":       runId = await runSegmentSync("manual", ctx);       break
       case "card-score":         runId = await runCardScore("manual", ctx);         break
       case "stage-sync":         runId = await runStageSync("manual", ctx);         break

@@ -5,6 +5,7 @@
  *   segment-sync  every 60 min
  *   card-score    every 30 min
  *   stage-sync    every 60 min
+ *   email-sync    every 2 min
  *   ai-score      daily at ~03:00 (approximated via interval)
  */
 
@@ -16,8 +17,9 @@ import { runInboundProcessor }     from "./inbound-processor.worker.js"
 import { runOutboundSender }       from "./outbound-sender.worker.js"
 import { runOutboundRecovery }     from "./outbound-recovery.worker.js"
 import { runAssignmentRecovery }   from "./assignment-recovery.worker.js"
+import { runEmailSync }            from "./email-sync.worker.js"
 
-export { runSegmentSync, runCardScore, runStageSync, runAiScore, runInboundProcessor, runOutboundSender, runOutboundRecovery, runAssignmentRecovery }
+export { runSegmentSync, runCardScore, runStageSync, runAiScore, runInboundProcessor, runOutboundSender, runOutboundRecovery, runAssignmentRecovery, runEmailSync }
 
 const MIN = 60_000
 
@@ -35,6 +37,7 @@ export function startWorkers() {
   schedule("inbound-processor",  () => runInboundProcessor("cron"),  5_000)
   schedule("outbound-sender",    () => runOutboundSender("cron"),    5_000)
   schedule("outbound-recovery",  () => runOutboundRecovery("cron"),  2 * MIN)
+  schedule("email-sync",         () => runEmailSync("cron"),         2 * MIN)
 
   // CRM workers
   schedule("segment-sync",        () => runSegmentSync("cron"),        60 * MIN)

@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from "express"
 import bcrypt from "bcryptjs"
 import { db } from "../db.js"
+import { encryptEmailSecret } from "../lib/email-crypto.js"
+import { publicEmailAccountSelect, syncEmailAccount, testEmailAccountById } from "../lib/email-service.js"
 
 const router = Router()
 
@@ -110,6 +112,128 @@ router.patch("/users/:id", async (req: Request, res: Response) => {
 router.delete("/users/:id", async (req: Request, res: Response) => {
   await db.user.delete({ where: { id: req.params.id } })
   return res.json({ ok: true })
+})
+
+// ─── EMAIL ACCOUNTS ──────────────────────────────────────────────────────────
+
+router.get("/email-accounts", async (req: Request, res: Response) => {
+  const { companyId } = req.query as Record<string, string>
+  if (!companyId) return res.status(400).json({ error: "companyId é obrigatório" })
+
+  const accounts = await db.emailAccount.findMany({
+    where: { companyId },
+    orderBy: { createdAt: "asc" },
+    select: publicEmailAccountSelect(),
+  })
+  return res.json(accounts)
+})
+
+router.post("/email-accounts", async (req: Request, res: Response) => {
+  const {
+    companyId, displayName, email, fromName, username, password,
+    imapHost, imapPort, imapSecure, smtpHost, smtpPort, smtpSecure,
+    mailbox, signature, syncEnabled,
+  } = req.body ?? {}
+
+  if (!companyId || !displayName?.trim() || !email?.trim() || !username?.trim() || !password?.trim()) {
+    return res.status(400).json({ error: "companyId, nome, e-mail, usuário e senha são obrigatórios" })
+  }
+  if (!imapHost?.trim() || !smtpHost?.trim()) {
+    return res.status(400).json({ error: "Hosts IMAP e SMTP são obrigatórios" })
+  }
+
+  try {
+    const account = await db.emailAccount.create({
+      data: {
+        companyId,
+        displayName: displayName.trim(),
+        email: email.trim().toLowerCase(),
+        fromName: fromName?.trim() || null,
+        username: username.trim(),
+        passwordEnc: encryptEmailSecret(password),
+        imapHost: imapHost.trim(),
+        imapPort: Number(imapPort || 993),
+        imapSecure: imapSecure !== false,
+        smtpHost: smtpHost.trim(),
+        smtpPort: Number(smtpPort || 465),
+        smtpSecure: smtpSecure !== false,
+        mailbox: mailbox?.trim() || "INBOX",
+        signature: signature?.trim() || null,
+        syncEnabled: syncEnabled !== false,
+        status: "DESCONECTADO",
+      },
+      select: publicEmailAccountSelect(),
+    })
+    return res.status(201).json(account)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Erro ao criar conta de e-mail"
+    if (message.includes("Unique constraint")) return res.status(409).json({ error: "Já existe uma conta com este e-mail" })
+    return res.status(500).json({ error: message })
+  }
+})
+
+router.patch("/email-accounts/:id", async (req: Request, res: Response) => {
+  const {
+    displayName, email, fromName, username, password,
+    imapHost, imapPort, imapSecure, smtpHost, smtpPort, smtpSecure,
+    mailbox, signature, syncEnabled, status,
+  } = req.body ?? {}
+
+  const validStatuses = ["CONECTADO", "DESCONECTADO", "REVISAR", "ERRO"]
+  const account = await db.emailAccount.update({
+    where: { id: req.params.id },
+    data: {
+      ...(displayName !== undefined ? { displayName: displayName.trim() } : {}),
+      ...(email !== undefined ? { email: email.trim().toLowerCase() } : {}),
+      ...(fromName !== undefined ? { fromName: fromName?.trim() || null } : {}),
+      ...(username !== undefined ? { username: username.trim() } : {}),
+      ...(password?.trim() ? { passwordEnc: encryptEmailSecret(password) } : {}),
+      ...(imapHost !== undefined ? { imapHost: imapHost.trim() } : {}),
+      ...(imapPort !== undefined ? { imapPort: Number(imapPort) } : {}),
+      ...(imapSecure !== undefined ? { imapSecure: Boolean(imapSecure) } : {}),
+      ...(smtpHost !== undefined ? { smtpHost: smtpHost.trim() } : {}),
+      ...(smtpPort !== undefined ? { smtpPort: Number(smtpPort) } : {}),
+      ...(smtpSecure !== undefined ? { smtpSecure: Boolean(smtpSecure) } : {}),
+      ...(mailbox !== undefined ? { mailbox: mailbox?.trim() || "INBOX" } : {}),
+      ...(signature !== undefined ? { signature: signature?.trim() || null } : {}),
+      ...(syncEnabled !== undefined ? { syncEnabled: Boolean(syncEnabled) } : {}),
+      ...(status && validStatuses.includes(status) ? { status } : {}),
+    },
+    select: publicEmailAccountSelect(),
+  })
+  return res.json(account)
+})
+
+router.delete("/email-accounts/:id", async (req: Request, res: Response) => {
+  await db.emailAccount.delete({ where: { id: req.params.id } })
+  return res.json({ ok: true })
+})
+
+router.post("/email-accounts/:id/test", async (req: Request, res: Response) => {
+  try {
+    const account = await testEmailAccountById(req.params.id)
+    return res.json(account)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    await db.emailAccount.update({
+      where: { id: req.params.id },
+      data: { status: "ERRO", lastError: message },
+    }).catch(() => {})
+    return res.status(422).json({ error: message })
+  }
+})
+
+router.post("/email-accounts/:id/sync", async (req: Request, res: Response) => {
+  try {
+    const result = await syncEmailAccount(req.params.id)
+    const account = await db.emailAccount.findUnique({
+      where: { id: req.params.id },
+      select: publicEmailAccountSelect(),
+    })
+    return res.json({ ...result, account })
+  } catch (err) {
+    return res.status(422).json({ error: err instanceof Error ? err.message : String(err) })
+  }
 })
 
 // ─── GET /settings/connectors ─────────────────────────────────────────────────

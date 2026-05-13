@@ -180,6 +180,13 @@ enum ConnectorStatus {
   ERRO
 }
 
+enum EmailAccountStatus {
+  CONECTADO
+  DESCONECTADO
+  REVISAR
+  ERRO
+}
+
 enum FlowNodeType {
   ASSISTENTE_IA
   ENVIAR_MENSAGEM
@@ -392,6 +399,7 @@ model Company {
   dynamicQrLinks    DynamicQrLink[]
   dynamicQrClicks   DynamicQrClick[]
   connectors        Connector[]
+  emailAccounts     EmailAccount[]
   metrics           Metric[]
   aiAudits          AIAudit[]
   invoices          Invoice[]
@@ -585,6 +593,7 @@ model Conversation {
   customerId  String?
   agentId     String?
   attendantId String?
+  emailAccountId String?
 
   channel       ConversationChannel
   status        ConversationStatus  @default(EM_ANALISE)
@@ -600,6 +609,7 @@ model Conversation {
   customer  Customer? @relation(fields: [customerId], references: [id])
   agent     Agent?    @relation(fields: [agentId], references: [id])
   attendant User?     @relation("ConversationAttendant", fields: [attendantId], references: [id])
+  emailAccount EmailAccount? @relation(fields: [emailAccountId], references: [id], onDelete: SetNull)
 
   messages         Message[]
   tags             ConversationTagLink[]
@@ -615,6 +625,7 @@ model Conversation {
   @@index([companyId, status])
   @@index([companyId, channel])
   @@index([agentId])
+  @@index([emailAccountId])
   @@index([lastMessageAt])
 }
 
@@ -1389,6 +1400,65 @@ model Connector {
   @@unique([companyId, name])
   @@index([companyId])
   @@index([companyId, type])
+}
+
+model EmailAccount {
+  id        String @id @default(cuid())
+  companyId String
+
+  displayName String
+  email       String
+  fromName    String?
+  username    String
+  passwordEnc String @db.Text
+
+  imapHost   String
+  imapPort   Int
+  imapSecure Boolean @default(true)
+  smtpHost   String
+  smtpPort   Int
+  smtpSecure Boolean @default(true)
+
+  mailbox     String             @default("INBOX")
+  signature   String?            @db.Text
+  status      EmailAccountStatus @default(DESCONECTADO)
+  syncEnabled Boolean            @default(true)
+  lastSyncAt  DateTime?
+  lastUid     Int                @default(0)
+  lastError   String?            @db.Text
+
+  company      Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  importedMessages EmailImportedMessage[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, email])
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([syncEnabled, status])
+}
+
+model EmailImportedMessage {
+  id              String @id @default(cuid())
+  emailAccountId  String
+  uid             Int
+  internetMessageId String?
+  conversationId  String?
+  messageId       String?
+  subject         String?
+  fromAddress     String?
+  receivedAt      DateTime?
+
+  emailAccount EmailAccount @relation(fields: [emailAccountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([emailAccountId, uid])
+  @@unique([emailAccountId, internetMessageId])
+  @@index([emailAccountId])
+  @@index([conversationId])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

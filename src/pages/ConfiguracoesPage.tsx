@@ -28,6 +28,8 @@ import {
   Activity,
   Shield,
   Settings,
+  Mail,
+  Send,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -48,7 +50,7 @@ interface CompanyData {
   currentUsers: number
   currentChats: number
   currentAgents: number
-  plan: { id: string; name: string; maxUsers: number | null }
+  plan?: { id: string; name: string; maxUsers: number | null } | null
 }
 
 interface UserData {
@@ -73,14 +75,38 @@ interface ConnectorData {
   createdAt: string
 }
 
+interface EmailAccountData {
+  id: string
+  displayName: string
+  email: string
+  fromName: string | null
+  username: string
+  imapHost: string
+  imapPort: number
+  imapSecure: boolean
+  smtpHost: string
+  smtpPort: number
+  smtpSecure: boolean
+  mailbox: string
+  signature: string | null
+  status: "CONECTADO" | "DESCONECTADO" | "REVISAR" | "ERRO"
+  syncEnabled: boolean
+  lastSyncAt: string | null
+  lastUid: number
+  lastError: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-type Section = "empresa" | "usuarios" | "canais" | "integracoes" | "ia"
+type Section = "empresa" | "usuarios" | "canais" | "email" | "integracoes" | "ia"
 
 const SECTIONS: { id: Section; label: string; icon: typeof Building2; desc: string }[] = [
   { id: "empresa",     label: "Empresa",        icon: Building2,   desc: "Perfil, plano e dados cadastrais" },
   { id: "usuarios",    label: "Usuários",        icon: Users,       desc: "Convidar, papéis e acesso" },
   { id: "canais",      label: "Canais",          icon: Plug,        desc: "WhatsApp, Instagram e outros canais" },
+  { id: "email",       label: "E-mail",          icon: Mail,        desc: "Contas IMAP/SMTP na fila" },
   { id: "integracoes", label: "Integrações",     icon: Shuffle,     desc: "CRM, webhooks e apps externos" },
   { id: "ia",          label: "IA & Operação",   icon: BrainCircuit,desc: "Modelos de IA e configurações da operação" },
 ]
@@ -193,6 +219,7 @@ export default function ConfiguracoesPage() {
           {section === "empresa"     && <EmpresaSection     companyId={companyId} token={token} />}
           {section === "usuarios"    && <UsuariosSection    companyId={companyId} token={token} />}
           {section === "canais"      && <ConectoresSection  companyId={companyId} token={token} type="CANAL" />}
+          {section === "email"       && <EmailAccountsSection companyId={companyId} token={token} />}
           {section === "integracoes" && <ConectoresSection  companyId={companyId} token={token} type="OTHER" />}
           {section === "ia"          && <IASection          companyId={companyId} token={token} />}
         </main>
@@ -238,7 +265,7 @@ function EmpresaSection({ companyId, token }: { companyId: string; token: string
   useEffect(() => {
     if (!companyId) return
     fetch(`/api/settings/company?companyId=${companyId}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error("Erro ao carregar empresa")))
       .then((d: CompanyData) => {
         setData(d)
         setForm({
@@ -270,6 +297,8 @@ function EmpresaSection({ companyId, token }: { companyId: string; token: string
     ATIVA: "Ativa", TRIAL: "Trial", INADIMPLENTE: "Inadimplente", SUSPENSA: "Suspensa",
   }
 
+  if (loading) return <Loader className="h-full" />
+
   return (
     <div className="flex min-h-0 flex-col overflow-hidden">
       <SectionHeader
@@ -291,7 +320,7 @@ function EmpresaSection({ companyId, token }: { companyId: string; token: string
             <div className="flex flex-wrap items-center gap-4 rounded-xl border bg-muted/30 px-4 py-3">
               <div>
                 <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Plano</p>
-                <p className="text-sm font-semibold">{data.plan.name}</p>
+                <p className="text-sm font-semibold">{data.plan?.name ?? "Sem plano"}</p>
               </div>
               <div>
                 <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Status</p>
@@ -301,7 +330,7 @@ function EmpresaSection({ companyId, token }: { companyId: string; token: string
               </div>
               <div>
                 <p className="text-[10px] uppercase tracking-widest text-muted-foreground">Usuários</p>
-                <p className="text-sm font-semibold">{data.currentUsers} {data.plan.maxUsers ? `/ ${data.plan.maxUsers}` : ""}</p>
+                <p className="text-sm font-semibold">{data.currentUsers} {data.plan?.maxUsers ? `/ ${data.plan.maxUsers}` : ""}</p>
               </div>
               {data.trialEndsAt && (
                 <div>
@@ -561,6 +590,302 @@ function UsuariosSection({ companyId, token }: { companyId: string; token: strin
 }
 
 // ─── Conectores Section (Canais + Integrações) ────────────────────────────────
+
+const EMPTY_EMAIL_FORM = {
+  displayName: "",
+  email: "",
+  fromName: "",
+  username: "",
+  password: "",
+  imapHost: "",
+  imapPort: "993",
+  imapSecure: true,
+  smtpHost: "",
+  smtpPort: "465",
+  smtpSecure: true,
+  mailbox: "INBOX",
+  signature: "",
+  syncEnabled: true,
+}
+
+function EmailAccountsSection({ companyId, token }: { companyId: string; token: string }) {
+  const [accounts, setAccounts] = useState<EmailAccountData[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showForm, setShowForm] = useState(false)
+  const [editing, setEditing] = useState<EmailAccountData | null>(null)
+  const [form, setForm] = useState(EMPTY_EMAIL_FORM)
+  const [saving, setSaving] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState("")
+
+  const fetchAccounts = useCallback(async () => {
+    if (!companyId) return
+    setLoading(true)
+    const res = await fetch(`/api/settings/email-accounts?companyId=${companyId}`, { headers: { Authorization: `Bearer ${token}` } })
+    if (res.ok) setAccounts(await res.json())
+    setLoading(false)
+  }, [companyId, token])
+
+  useEffect(() => { fetchAccounts() }, [fetchAccounts])
+
+  function openNew() {
+    setEditing(null)
+    setForm(EMPTY_EMAIL_FORM)
+    setError("")
+    setShowForm(true)
+  }
+
+  function openEdit(account: EmailAccountData) {
+    setEditing(account)
+    setForm({
+      displayName: account.displayName,
+      email: account.email,
+      fromName: account.fromName ?? "",
+      username: account.username,
+      password: "",
+      imapHost: account.imapHost,
+      imapPort: String(account.imapPort),
+      imapSecure: account.imapSecure,
+      smtpHost: account.smtpHost,
+      smtpPort: String(account.smtpPort),
+      smtpSecure: account.smtpSecure,
+      mailbox: account.mailbox,
+      signature: account.signature ?? "",
+      syncEnabled: account.syncEnabled,
+    })
+    setError("")
+    setShowForm(true)
+  }
+
+  async function handleSave() {
+    if (!form.displayName.trim() || !form.email.trim() || !form.username.trim()) {
+      setError("Nome, e-mail e usuário são obrigatórios")
+      return
+    }
+    if (!editing && !form.password.trim()) {
+      setError("Senha/app password é obrigatória para criar a conta")
+      return
+    }
+    setSaving(true)
+    setError("")
+    const body = {
+      ...form,
+      companyId,
+      imapPort: Number(form.imapPort || 993),
+      smtpPort: Number(form.smtpPort || 465),
+    }
+    const res = await fetch(editing ? `/api/settings/email-accounts/${editing.id}` : "/api/settings/email-accounts", {
+      method: editing ? "PATCH" : "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    })
+    const data = await res.json().catch(() => ({}))
+    setSaving(false)
+    if (!res.ok) {
+      setError(data.error ?? "Erro ao salvar conta de e-mail")
+      return
+    }
+    setShowForm(false)
+    await fetchAccounts()
+  }
+
+  async function patchAccount(id: string, data: Partial<EmailAccountData>) {
+    await fetch(`/api/settings/email-accounts/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    })
+    fetchAccounts()
+  }
+
+  async function testAccount(id: string) {
+    setBusyId(id)
+    const res = await fetch(`/api/settings/email-accounts/${id}/test`, { method: "POST", headers: { Authorization: `Bearer ${token}` } })
+    const data = await res.json().catch(() => ({}))
+    setBusyId(null)
+    if (!res.ok) alert(data.error ?? "Falha ao testar conexão")
+    fetchAccounts()
+  }
+
+  async function syncAccount(id: string) {
+    setBusyId(id)
+    const res = await fetch(`/api/settings/email-accounts/${id}/sync`, { method: "POST", headers: { Authorization: `Bearer ${token}` } })
+    const data = await res.json().catch(() => ({}))
+    setBusyId(null)
+    if (!res.ok) alert(data.error ?? "Falha ao sincronizar e-mails")
+    fetchAccounts()
+  }
+
+  async function deleteAccount(id: string, email: string) {
+    if (!confirm(`Remover a conta ${email}?`)) return
+    await fetch(`/api/settings/email-accounts/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } })
+    fetchAccounts()
+  }
+
+  return (
+    <div className="flex min-h-0 flex-col overflow-hidden">
+      <SectionHeader
+        icon={Mail}
+        title="Contas de e-mail"
+        subtitle="Caixas compartilhadas IMAP/SMTP sincronizadas com a fila de atendimento"
+        action={
+          <Button size="sm" className="gap-1.5" onClick={openNew}>
+            <Plus className="size-3.5" />
+            Nova conta
+          </Button>
+        }
+      />
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {showForm && (
+          <div className="border-b bg-muted/20 px-4 py-4">
+            <p className="mb-3 text-sm font-medium">{editing ? "Editar conta de e-mail" : "Nova conta de e-mail"}</p>
+            <div className="grid gap-3 lg:grid-cols-2">
+              <FormField label="Nome da caixa" required>
+                <Input className="h-8 text-sm" value={form.displayName} onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} placeholder="Atendimento" />
+              </FormField>
+              <FormField label="E-mail/remetente" required>
+                <Input className="h-8 text-sm" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="atendimento@empresa.com" />
+              </FormField>
+              <FormField label="Nome do remetente">
+                <Input className="h-8 text-sm" value={form.fromName} onChange={(e) => setForm((f) => ({ ...f, fromName: e.target.value }))} placeholder="Equipe de Atendimento" />
+              </FormField>
+              <FormField label="Usuário" required>
+                <Input className="h-8 text-sm" value={form.username} onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} placeholder="Geralmente o próprio e-mail" />
+              </FormField>
+              <FormField label={editing ? "Nova senha/app password" : "Senha/app password"} required={!editing}>
+                <Input className="h-8 text-sm" type="password" value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} placeholder={editing ? "Deixe em branco para manter" : "Senha do provedor"} />
+              </FormField>
+              <FormField label="Pasta IMAP">
+                <Input className="h-8 text-sm" value={form.mailbox} onChange={(e) => setForm((f) => ({ ...f, mailbox: e.target.value }))} placeholder="INBOX" />
+              </FormField>
+              <FormField label="IMAP host" required>
+                <Input className="h-8 text-sm" value={form.imapHost} onChange={(e) => setForm((f) => ({ ...f, imapHost: e.target.value }))} placeholder="imap.gmail.com" />
+              </FormField>
+              <div className="grid grid-cols-[1fr_120px] gap-2">
+                <FormField label="IMAP porta" required>
+                  <Input className="h-8 text-sm" type="number" value={form.imapPort} onChange={(e) => setForm((f) => ({ ...f, imapPort: e.target.value }))} />
+                </FormField>
+                <FormField label="IMAP TLS">
+                  <select className="h-8 w-full rounded-md border bg-white px-2 text-sm" value={String(form.imapSecure)} onChange={(e) => setForm((f) => ({ ...f, imapSecure: e.target.value === "true" }))}>
+                    <option value="true">Sim</option>
+                    <option value="false">Não</option>
+                  </select>
+                </FormField>
+              </div>
+              <FormField label="SMTP host" required>
+                <Input className="h-8 text-sm" value={form.smtpHost} onChange={(e) => setForm((f) => ({ ...f, smtpHost: e.target.value }))} placeholder="smtp.gmail.com" />
+              </FormField>
+              <div className="grid grid-cols-[1fr_120px] gap-2">
+                <FormField label="SMTP porta" required>
+                  <Input className="h-8 text-sm" type="number" value={form.smtpPort} onChange={(e) => setForm((f) => ({ ...f, smtpPort: e.target.value }))} />
+                </FormField>
+                <FormField label="SMTP TLS">
+                  <select className="h-8 w-full rounded-md border bg-white px-2 text-sm" value={String(form.smtpSecure)} onChange={(e) => setForm((f) => ({ ...f, smtpSecure: e.target.value === "true" }))}>
+                    <option value="true">Sim</option>
+                    <option value="false">Não</option>
+                  </select>
+                </FormField>
+              </div>
+              <FormField label="Sincronização">
+                <select className="h-8 w-full rounded-md border bg-white px-2 text-sm" value={String(form.syncEnabled)} onChange={(e) => setForm((f) => ({ ...f, syncEnabled: e.target.value === "true" }))}>
+                  <option value="true">Ativa</option>
+                  <option value="false">Pausada</option>
+                </select>
+              </FormField>
+              <div className="lg:col-span-2">
+                <FormField label="Assinatura">
+                  <textarea className="min-h-20 w-full resize-none rounded-md border bg-white p-2 text-sm" value={form.signature} onChange={(e) => setForm((f) => ({ ...f, signature: e.target.value }))} placeholder="Mensagem adicionada ao final das respostas" />
+                </FormField>
+              </div>
+            </div>
+            {error && <p className="mt-3 text-xs text-red-600">{error}</p>}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setShowForm(false)}>Cancelar</Button>
+              <Button size="sm" onClick={handleSave} disabled={saving}>
+                {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                Salvar
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {loading ? (
+          <Loader className="py-20" />
+        ) : accounts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-20 text-muted-foreground">
+            <Mail className="size-8 opacity-20" />
+            <p className="text-sm">Nenhuma conta de e-mail configurada.</p>
+            <Button size="sm" variant="outline" onClick={openNew}>Adicionar primeira conta</Button>
+          </div>
+        ) : (
+          <div className="grid gap-3 p-4 lg:grid-cols-2">
+            {accounts.map((account) => {
+              const StatusIcon = STATUS_ICON[account.status] ?? Activity
+              const busy = busyId === account.id
+              return (
+                <div key={account.id} className="rounded-xl border bg-white p-3.5 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{account.displayName}</p>
+                      <p className="truncate text-xs text-muted-foreground">{account.email}</p>
+                    </div>
+                    <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium", STATUS_STYLE[account.status])}>
+                      <StatusIcon className="size-2.5" />
+                      {account.status}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+                    <div className="rounded-md border bg-muted/20 p-2">
+                      <p className="text-muted-foreground">IMAP</p>
+                      <p className="truncate font-mono">{account.imapHost}:{account.imapPort}</p>
+                    </div>
+                    <div className="rounded-md border bg-muted/20 p-2">
+                      <p className="text-muted-foreground">SMTP</p>
+                      <p className="truncate font-mono">{account.smtpHost}:{account.smtpPort}</p>
+                    </div>
+                    <div className="rounded-md border bg-muted/20 p-2">
+                      <p className="text-muted-foreground">Último sync</p>
+                      <p>{fmtRelative(account.lastSyncAt)}</p>
+                    </div>
+                    <div className="rounded-md border bg-muted/20 p-2">
+                      <p className="text-muted-foreground">UID</p>
+                      <p>{account.lastUid || "—"}</p>
+                    </div>
+                  </div>
+                  {account.lastError && (
+                    <p className="mt-2 line-clamp-2 rounded-md bg-red-50 px-2 py-1.5 text-[11px] text-red-700">{account.lastError}</p>
+                  )}
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t pt-2">
+                    <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => testAccount(account.id)} disabled={busy}>
+                      {busy ? <Loader2 className="size-3 animate-spin" /> : <CheckCircle2 className="size-3" />}
+                      Testar
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={() => syncAccount(account.id)} disabled={busy || !account.syncEnabled}>
+                      {busy ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
+                      Sync
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" onClick={() => openEdit(account)}>
+                      <Settings className="size-3" />
+                      Editar
+                    </Button>
+                    <select className="ml-auto h-7 rounded border bg-white px-1.5 text-[11px]" value={String(account.syncEnabled)} onChange={(e) => patchAccount(account.id, { syncEnabled: e.target.value === "true" } as Partial<EmailAccountData>)}>
+                      <option value="true">Sync ativo</option>
+                      <option value="false">Sync pausado</option>
+                    </select>
+                    <button onClick={() => deleteAccount(account.id, account.email)} className="rounded p-1 text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600">
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 const CANAL_TYPES = ["CANAL"]
 const CANAL_SUBTYPES = ["WhatsApp", "Instagram", "Telegram", "Facebook", "Chat no site", "E-mail"]
