@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom"
 import {
   Building2, Search, Plus, X, ChevronRight, Users, Phone, Mail,
   Globe, MapPin, DollarSign, Kanban, LifeBuoy, MessageCircle,
-  ExternalLink, Link2, Unlink,
+  ExternalLink, Link2, Loader2,
 } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -314,112 +315,133 @@ export default function EmpresasPage() {
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
+      <div className="grid h-full min-w-[1100px] grid-cols-[300px_minmax(500px,1fr)_320px] gap-2.5 p-2.5 md:p-3">
       {/* ── Left panel — List ─────────────────────────────────────────── */}
-      <div className="flex w-72 shrink-0 flex-col border-r bg-muted/20">
-        <div className="flex items-center justify-between border-b p-3">
-          <span className="text-sm font-semibold">Empresas</span>
-          <Button size="sm" className="h-7 gap-1 text-xs" onClick={() => setCreateOpen(true)}>
-            <Plus className="size-3.5" /> Nova
-          </Button>
-        </div>
-
-        <div className="space-y-1.5 border-b p-2">
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="h-7 pl-7 text-xs"
+      <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border bg-white shadow-sm">
+        <div className="shrink-0 space-y-2 border-b p-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">Empresas</h2>
+            <Button size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-3" /> Nova
+            </Button>
+          </div>
+          <div className="flex items-center gap-1.5 rounded-md border bg-white px-2 py-1">
+            <Search className="size-3.5 shrink-0 text-muted-foreground" />
+            <input
+              className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
               placeholder="Buscar nome ou CNPJ…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
+            {q && <button onClick={() => setQ("")}><X className="size-3 text-muted-foreground" /></button>}
           </div>
-          <div className="flex gap-1">
+          <div className="flex gap-1.5">
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="h-6 flex-1 text-[11px]"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectTrigger className="h-7 flex-1 bg-white text-[11px]"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                <SelectItem value="Prospect">Prospect</SelectItem>
-                <SelectItem value="Ativa">Ativa</SelectItem>
-                <SelectItem value="Inativa">Inativa</SelectItem>
-                <SelectItem value="Parceira">Parceira</SelectItem>
+                <SelectItem value="all" className="text-xs">Todos status</SelectItem>
+                <SelectItem value="Prospect" className="text-xs">Prospect</SelectItem>
+                <SelectItem value="Ativa" className="text-xs">Ativa</SelectItem>
+                <SelectItem value="Inativa" className="text-xs">Inativa</SelectItem>
+                <SelectItem value="Parceira" className="text-xs">Parceira</SelectItem>
               </SelectContent>
             </Select>
             <Select value={industryFilter} onValueChange={setIndustryFilter}>
-              <SelectTrigger className="h-6 flex-1 text-[11px]"><SelectValue placeholder="Setor" /></SelectTrigger>
+              <SelectTrigger className="h-7 flex-1 bg-white text-[11px]"><SelectValue placeholder="Setor" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todos</SelectItem>
-                <SelectItem value="Tecnologia">Tecnologia</SelectItem>
-                <SelectItem value="Saúde">Saúde</SelectItem>
-                <SelectItem value="Varejo">Varejo</SelectItem>
-                <SelectItem value="Serviços">Serviços</SelectItem>
-                <SelectItem value="Indústria">Indústria</SelectItem>
-                <SelectItem value="Educação">Educação</SelectItem>
-                <SelectItem value="Outros">Outros</SelectItem>
+                <SelectItem value="all" className="text-xs">Todos setores</SelectItem>
+                {["Tecnologia","Saúde","Varejo","Serviços","Indústria","Educação","Outros"].map((o) => (
+                  <SelectItem key={o} value={o} className="text-xs">{o}</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {loadingList ? (
-            <div className="p-4 text-center text-xs text-muted-foreground">Carregando…</div>
-          ) : list.length === 0 ? (
-            <div className="p-4 text-center text-xs text-muted-foreground">Nenhuma empresa encontrada.</div>
-          ) : list.map((acc) => (
+        <div className="grid shrink-0 grid-cols-[1fr_auto] border-b bg-muted/40 px-3 py-1.5 text-[11px] font-medium text-muted-foreground">
+          <span>Empresa</span>
+          <span>Contatos</span>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {loadingList && <p className="py-8 text-center text-xs text-muted-foreground">Carregando…</p>}
+          {!loadingList && list.length === 0 && (
+            <p className="py-8 text-center text-xs text-muted-foreground">Nenhuma empresa encontrada.</p>
+          )}
+          {list.map((acc) => (
             <button
               key={acc.id}
               onClick={() => fetchDetail(acc.id)}
-              className={`w-full border-b px-3 py-2.5 text-left transition-colors hover:bg-accent/60 ${selected?.id === acc.id ? "bg-accent" : ""}`}
+              className={cn(
+                "group grid w-full grid-cols-[1fr_auto] items-start gap-2 border-b px-3 py-2 text-left transition-colors hover:bg-muted/40",
+                selected?.id === acc.id && "bg-primary/5",
+              )}
             >
-              <div className="flex items-start justify-between gap-1">
-                <span className="min-w-0 flex-1 truncate text-sm font-medium">{acc.name}</span>
-                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${statusColor[acc.status] ?? "bg-gray-100 text-gray-600"}`}>
-                  {acc.status}
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5">
+                  <span className="truncate text-sm font-semibold">{acc.name}</span>
                 </span>
-              </div>
-              <div className="mt-0.5 flex items-center gap-2 text-[11px] text-muted-foreground">
-                {acc.industry && <span>{acc.industry}</span>}
-                {acc.industry && <span>·</span>}
-                <Users className="size-3" />
-                <span>{acc._count.contacts} contato{acc._count.contacts !== 1 ? "s" : ""}</span>
-              </div>
+                <span className="block truncate text-[11px] text-muted-foreground">
+                  {acc.industry ?? acc.city ?? acc.cnpj ?? "—"}
+                </span>
+                <span className="mt-1 flex items-center gap-1.5">
+                  <span className={cn("rounded px-1.5 py-0 text-[10px] font-medium", statusColor[acc.status] ?? "bg-gray-100 text-gray-600")}>
+                    {acc.status}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">{fmtCurrency(acc.value)}</span>
+                </span>
+              </span>
+              <span className="mt-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[11px] font-bold text-muted-foreground">
+                {acc._count.contacts}
+              </span>
             </button>
           ))}
         </div>
-      </div>
+
+        <div className="shrink-0 border-t bg-muted/30 px-3 py-1.5 text-[11px] text-muted-foreground">
+          {list.length} empresa{list.length !== 1 ? "s" : ""}
+        </div>
+      </section>
 
       {/* ── Center panel — Detail ─────────────────────────────────────── */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <section className="min-h-0 overflow-y-auto rounded-lg border bg-white shadow-sm">
         {!selected ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
-            <Building2 className="size-10 opacity-30" />
-            <p className="text-sm">Selecione uma empresa</p>
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
+            {loadingDetail ? <Loader2 className="size-6 animate-spin" /> : <Building2 className="size-10 opacity-30" />}
+            <p className="text-sm">{loadingDetail ? "Carregando…" : "Selecione uma empresa"}</p>
           </div>
         ) : loadingDetail ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Carregando…</div>
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            <Loader2 className="mr-2 size-4 animate-spin" /> Carregando…
+          </div>
         ) : (
-          <>
+          <div className="p-4">
             {/* Header */}
-            <div className="flex items-center gap-3 border-b px-4 py-3">
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-green-100 text-green-700">
-                <Building2 className="size-4" />
+            <div className="flex flex-wrap items-start gap-3 border-b pb-4">
+              <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                <Building2 className="size-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate font-semibold">{selected.name}</p>
-                <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  {selected.industry && <span>{selected.industry}</span>}
-                  {selected.size && <><span>·</span><span>{selected.size}</span></>}
+                <p className="truncate text-base font-semibold">{selected.name}</p>
+                <p className="text-sm text-muted-foreground">
+                  {selected.industry ?? selected.cnpj ?? "—"}
+                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  <span className={cn("rounded px-1.5 py-0 text-[10px] font-medium", statusColor[selected.status] ?? "bg-gray-100 text-gray-600")}>
+                    {selected.status}
+                  </span>
+                  {selected.size && <Badge variant="outline" className="text-[10px]">{selected.size}</Badge>}
+                  {(selected.city || selected.state) && (
+                    <Badge variant="outline" className="text-[10px]">{[selected.city, selected.state].filter(Boolean).join(" / ")}</Badge>
+                  )}
                 </div>
               </div>
-              <span className={`shrink-0 rounded px-2 py-0.5 text-xs font-medium ${statusColor[selected.status] ?? "bg-gray-100"}`}>
-                {selected.status}
-              </span>
             </div>
 
             {/* Tabs */}
-            <Tabs defaultValue="perfil" className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <TabsList className="shrink-0 rounded-none border-b bg-transparent px-4 justify-start">
+            <Tabs defaultValue="perfil" className="mt-4">
+              <TabsList className="h-8 text-xs">
                 <TabsTrigger value="perfil" className="text-xs">Perfil</TabsTrigger>
                 <TabsTrigger value="contatos" className="text-xs">
                   Contatos
@@ -433,7 +455,7 @@ export default function EmpresasPage() {
               </TabsList>
 
               {/* ── Perfil ── */}
-              <TabsContent value="perfil" className="flex-1 overflow-y-auto p-4">
+              <TabsContent value="perfil" className="mt-4">
                 <div className="space-y-3">
                   <div className="rounded-lg border p-3">
                     <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contato</p>
@@ -523,7 +545,7 @@ export default function EmpresasPage() {
               </TabsContent>
 
               {/* ── Contatos ── */}
-              <TabsContent value="contatos" className="flex-1 overflow-y-auto p-4">
+              <TabsContent value="contatos" className="mt-4">
                 <div className="mb-3 flex items-center justify-between">
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Contatos vinculados</p>
                   <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={() => setLinkOpen(true)}>
@@ -572,7 +594,7 @@ export default function EmpresasPage() {
               </TabsContent>
 
               {/* ── Oportunidades ── */}
-              <TabsContent value="oportunidades" className="flex-1 overflow-y-auto p-4">
+              <TabsContent value="oportunidades" className="mt-4">
                 {selected.kanbanCards.length === 0 ? (
                   <p className="text-xs text-muted-foreground">Nenhuma oportunidade encontrada.</p>
                 ) : (
@@ -599,7 +621,7 @@ export default function EmpresasPage() {
               </TabsContent>
 
               {/* ── Histórico ── */}
-              <TabsContent value="historico" className="flex-1 overflow-y-auto p-4 space-y-4">
+              <TabsContent value="historico" className="mt-4 space-y-4">
                 <div>
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Conversas recentes (48h)</p>
                   {selected.recentConversations.length === 0 ? (
@@ -648,14 +670,18 @@ export default function EmpresasPage() {
                 </div>
               </TabsContent>
             </Tabs>
-          </>
+          </div>
         )}
-      </div>
+      </section>
 
       {/* ── Right panel — KPIs ───────────────────────────────────────── */}
-      {selected && kpis && (
-        <div className="w-56 shrink-0 overflow-y-auto border-l bg-muted/20 p-4">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Visão consolidada</p>
+      <aside className="min-h-0 space-y-3 overflow-y-auto">
+        <div className="rounded-lg border bg-white p-3 shadow-sm">
+          <div className="mb-3">
+            <p className="text-sm font-semibold">Visão consolidada</p>
+            <p className="text-[11px] text-muted-foreground">Conta, relacionamento e SLA</p>
+          </div>
+          {selected && kpis ? (
           <div className="space-y-3">
             {[
               { label: "Contatos",       value: String(kpis.contacts),               icon: Users },
@@ -673,8 +699,15 @@ export default function EmpresasPage() {
               </div>
             ))}
           </div>
+          ) : (
+            <div className="rounded-lg border bg-muted/20 py-8 text-center text-sm text-muted-foreground">
+              <Building2 className="mx-auto mb-2 size-7 opacity-40" />
+              Selecione uma empresa
+            </div>
+          )}
         </div>
-      )}
+      </aside>
+      </div>
 
       {/* ── Sheet: Nova empresa ──────────────────────────────────────── */}
       <Sheet open={createOpen} onClose={() => setCreateOpen(false)} className="w-[440px]">
@@ -809,4 +842,3 @@ export default function EmpresasPage() {
     </div>
   )
 }
-
