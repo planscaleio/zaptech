@@ -1,0 +1,1650 @@
+// ─── Prisma config ────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum CompanyStatus {
+  ATIVA
+  TRIAL
+  INADIMPLENTE
+  SUSPENSA
+}
+
+enum PlanBilling {
+  MENSAL
+  NEGOCIADO
+}
+
+enum UserRole {
+  OWNER
+  ADMIN
+  GESTOR
+  ATENDENTE
+}
+
+enum UserStatus {
+  ATIVO
+  TRIAL
+  BLOQUEADO
+}
+
+enum AdminUserRole {
+  SUPER_ADMIN
+  FINANCEIRO
+}
+
+enum InvoiceStatus {
+  PAGO
+  VENCIDO
+  TRIAL
+  PENDENTE
+  CANCELADO
+}
+
+enum InvoicePaymentMethod {
+  BOLETO
+  CARTAO
+  PIX
+  NEGOCIADO
+}
+
+enum ConversationStatus {
+  ALTA_INTENCAO
+  AGUARDANDO
+  EM_ANALISE
+  RESOLVIDO
+  ENCERRADO
+  ARQUIVADO
+  PARA_EXCLUIR
+}
+
+enum ConversationChannel {
+  WHATSAPP
+  INSTAGRAM
+  SITE
+  EMAIL
+  TELEFONE
+  WEBHOOK
+}
+
+enum MessageRole {
+  CLIENTE
+  ATENDENTE
+  AGENTE_IA
+  SISTEMA
+}
+
+enum AgentStatus {
+  ONLINE
+  BUSY
+  OFFLINE
+}
+
+enum CustomerStatus {
+  QUENTE
+  NUTRICAO
+  EM_ANALISE
+  CLIENTE
+  INATIVO
+  PERDIDO
+}
+
+enum CustomerStage {
+  PROSPECCAO
+  QUALIFICACAO
+  DEMONSTRACAO
+  PROPOSTA
+  NEGOCIACAO
+  FECHADO
+  POS_VENDA
+}
+
+enum LeadSource {
+  WHATSAPP
+  INSTAGRAM
+  SITE
+  CAMPANHA_CRM
+  WEBHOOK
+  EMAIL
+  INDICACAO
+  ORGANICO
+  OUTRO
+}
+
+enum WorkflowStatus {
+  ATIVO
+  PAUSADO
+  RASCUNHO
+  ARQUIVADO
+}
+
+enum KnowledgeArticleStatus {
+  RASCUNHO
+  PUBLICADO
+  ARQUIVADO
+}
+
+enum BroadcastStatus {
+  AGENDADA
+  EM_ENVIO
+  CONCLUIDA
+  RASCUNHO
+  CANCELADA
+}
+
+enum CampaignType {
+  AQUISICAO
+  RETENCAO
+  ABM
+  REATIVACAO
+  UPSELL
+}
+
+enum CampaignStatus {
+  ATIVA
+  PLANEJADA
+  PAUSADA
+  CONCLUIDA
+  CANCELADA
+}
+
+enum DynamicQrStatus {
+  ATIVO
+  PAUSADO
+  ARQUIVADO
+}
+
+enum ConnectorType {
+  CANAL
+  CRM
+  ENTRADA
+  AGENDA
+  PAGAMENTO
+  OUTRO
+}
+
+enum ConnectorStatus {
+  CONECTADO
+  ATIVO
+  REVISAR
+  DESCONECTADO
+  ERRO
+}
+
+enum FlowNodeType {
+  ASSISTENTE_IA
+  ENVIAR_MENSAGEM
+  CONDICAO
+  ESPERA
+  WEBHOOK
+  TRANSFERIR_AGENTE
+  FINALIZAR
+}
+
+enum RiskLevel {
+  BAIXO
+  MEDIO
+  ALTO
+  CRITICO
+}
+
+enum Sentiment {
+  POSITIVO
+  NEUTRO
+  NEGATIVO
+}
+
+enum ChatSentiment {
+  POSITIVO
+  NEUTRO
+  NEGATIVO
+}
+
+enum KanbanPriority {
+  BAIXA
+  MEDIA
+  ALTA
+  URGENTE
+}
+
+enum ProductStatus {
+  ATIVO
+  CANCELADO
+  CONCLUIDO
+  PENDENTE
+}
+
+enum CatalogItemStatus {
+  ATIVO
+  INATIVO
+}
+
+enum QuoteStatus {
+  RASCUNHO
+  ENVIADO
+  ACEITO
+  RECUSADO
+  EXPIRADO
+  CANCELADO
+}
+
+enum QuoteDiscountType {
+  VALOR
+  PERCENTUAL
+}
+
+enum QuoteEventType {
+  CRIADO
+  ATUALIZADO
+  ENVIADO
+  ACEITO
+  RECUSADO
+  EXPIRADO
+  CANCELADO
+}
+
+enum InboundStatus {
+  PENDING
+  PROCESSING
+  DONE
+  FAILED
+}
+
+enum OutboundStatus {
+  QUEUED
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum RuleActionType {
+  TEAM
+  SPECIFIC_USER
+  EXISTING_OWNER
+  QUEUE
+}
+
+enum RuleStrategy {
+  ROUND_ROBIN
+  LOWEST_LOAD
+  EXISTING_OWNER
+  MANUAL
+}
+
+enum RuleFallback {
+  QUEUE
+  NEXT_RULE
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PLATFORM-LEVEL (ADMIN) MODELS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Subscription plan — null limits mean unlimited (Enterprise)
+model Plan {
+  id          String      @id @default(cuid())
+  name        String      @unique
+  slug        String      @unique
+  color       String      @default("gray")
+  price       Decimal     @db.Decimal(10, 2)
+  billing     PlanBilling @default(MENSAL)
+  highlight   Boolean     @default(false)
+  description String?
+  isActive    Boolean     @default(true)
+
+  maxUsers  Int?
+  maxChats  Int?
+  maxAgents Int?
+  maxBoards Int?
+
+  features  PlanFeature[]
+  extras    PlanExtra[]
+  companies Company[]
+  invoices  Invoice[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive])
+}
+
+/// Human-readable feature rows per plan (e.g. "Transmissões — Ilimitadas — included")
+model PlanFeature {
+  id        String  @id @default(cuid())
+  planId    String
+  label     String
+  value     String  @default("")
+  included  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId])
+}
+
+/// Overage pricing rows per plan.
+/// unitPriceCents: machine-readable price in BRL centavos (0 = included/negotiated).
+/// unitType: "user" | "1000_chats" | "agent" | "custom"
+model PlanExtra {
+  id             String @id @default(cuid())
+  planId         String
+  label          String
+  price          String
+  unitPriceCents Int    @default(0)
+  unitType       String @default("custom")
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId])
+}
+
+/// Tenant company
+model Company {
+  id     String        @id @default(cuid())
+  name   String
+  slug   String        @unique
+  status CompanyStatus @default(TRIAL)
+  planId String
+
+  ownerName String?
+  email     String?
+  phone     String?
+  cnpj      String?
+  city      String?
+
+  mrr         Decimal   @default(0) @db.Decimal(10, 2)
+  nextBilling DateTime?
+  trialEndsAt DateTime?
+
+  // Denormalised counters for admin dashboard speed
+  currentUsers  Int @default(0)
+  currentChats  Int @default(0)
+  currentAgents Int @default(0)
+
+  plan Plan @relation(fields: [planId], references: [id])
+
+  users             User[]
+  agents            Agent[]
+  conversations     Conversation[]
+  customers         Customer[]
+  salesTeams        SalesTeam[]
+  distributionRules DistributionRule[]
+  kanbanBoards      KanbanBoard[]
+  workflows         Workflow[]
+  knowledgeArticles KnowledgeArticle[]
+  segments          Segment[]
+  broadcasts        Broadcast[]
+  campaigns         Campaign[]
+  productCategories ProductCategory[]
+  catalogProducts   CatalogProduct[]
+  quotes            Quote[]
+  whatsAppRouting   CompanyWhatsAppRouting?
+  dynamicQrLinks    DynamicQrLink[]
+  dynamicQrClicks   DynamicQrClick[]
+  connectors        Connector[]
+  metrics           Metric[]
+  aiAudits          AIAudit[]
+  invoices          Invoice[]
+  tags              Tag[]
+  supportTickets    SupportTicket[]
+  businessAccounts  BusinessAccount[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([planId])
+  @@index([status])
+  @@index([slug])
+}
+
+/// Per-company user
+model User {
+  id           String     @id @default(cuid())
+  companyId    String
+  name         String
+  email        String
+  role         UserRole   @default(ATENDENTE)
+  status       UserStatus @default(ATIVO)
+  lastSeen     DateTime?
+  avatarUrl    String?
+  passwordHash String?
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  ownedConversations  Conversation[]      @relation("ConversationAttendant")
+  ownedCustomers      Customer[]          @relation("CustomerOwner")
+  managedTeams        SalesTeam[]         @relation("TeamManager")
+  teamMemberships     SalesTeamMember[]
+  attendedCustomers   CustomerAttendant[]
+  targetedByRules     DistributionRule[]  @relation("RuleTargetUser")
+  assignedKanbanCards KanbanCard[]        @relation("KanbanCardAssignee")
+  authLogs            AuthLog[]
+  sessions            Session[]
+  knowledgeArticles   KnowledgeArticle[] @relation("KnowledgeArticleAuthor")
+  knowledgeArticleVersions KnowledgeArticleVersion[] @relation("KnowledgeArticleVersionAuthor")
+  generatedQuotes     Quote[]     @relation("QuoteGeneratedBy")
+  quoteEvents         QuoteEvent[] @relation("QuoteEventAuthor")
+  auditedAuditRecords AIAudit[]   @relation("AIAuditAttendant")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([email, companyId])
+  @@index([companyId])
+  @@index([email])
+  @@index([companyId, role])
+}
+
+/// Platform-level admin (cross-company, accesses Admin panel)
+model AdminUser {
+  id           String        @id @default(cuid())
+  name         String
+  email        String        @unique
+  role         AdminUserRole @default(FINANCEIRO)
+  passwordHash String?
+  lastSeen     DateTime?
+
+  authLogs AuthLog[]
+  sessions Session[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum AuthLogResult {
+  SUCCESS
+  WRONG_PASSWORD
+  USER_NOT_FOUND
+  BLOCKED
+}
+
+enum AuthActorType {
+  USER // User scoped a company
+  ADMIN_USER // Platform admin
+}
+
+/// Audit log de todas as tentativas de login
+model AuthLog {
+  id          String         @id @default(cuid())
+  email       String
+  result      AuthLogResult
+  actorType   AuthActorType?
+  userId      String?
+  adminUserId String?
+  ip          String?
+  userAgent   String?
+  companyId   String?
+
+  user      User?      @relation(fields: [userId], references: [id])
+  adminUser AdminUser? @relation(fields: [adminUserId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([email])
+  @@index([userId])
+  @@index([adminUserId])
+  @@index([createdAt])
+  @@index([result])
+}
+
+/// JWT session token válido (para invalidação via logout)
+model Session {
+  id          String   @id @default(cuid())
+  userId      String?
+  adminUserId String?
+  token       String   @unique
+  expiresAt   DateTime
+  ip          String?
+  userAgent   String?
+
+  user      User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  adminUser AdminUser? @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+  @@index([adminUserId])
+  @@index([expiresAt])
+}
+
+/// Singleton platform configuration (one row)
+model PlatformConfig {
+  id           String  @id @default(cuid())
+  name         String  @default("ZapVendas")
+  domain       String  @default("app.zapvendas.com.br")
+  supportEmail String?
+  timezone     String  @default("America/Sao_Paulo")
+  gateway      String  @default("Stripe")
+  currency     String  @default("BRL")
+  trialDays    Int     @default(14)
+
+  trialWarnDays      Int @default(3)
+  invoiceOverdueDays Int @default(3)
+  chatUsageThreshold Int @default(90)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Monthly billing invoice
+model Invoice {
+  id        String                @id @default(cuid())
+  companyId String
+  planId    String
+  status    InvoiceStatus         @default(PENDENTE)
+  method    InvoicePaymentMethod?
+  amount    Decimal               @db.Decimal(10, 2)
+  dueDate   DateTime?
+  paidAt    DateTime?
+  notes     String?
+
+  company   Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  plan      Plan              @relation(fields: [planId], references: [id])
+  lineItems InvoiceLineItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([status])
+  @@index([companyId, status])
+}
+
+/// Line items for base subscription + overages
+model InvoiceLineItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Int     @default(1)
+  unitPrice   Decimal @db.Decimal(10, 2)
+  total       Decimal @db.Decimal(10, 2)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — CONVERSATIONS & MESSAGING
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Conversation {
+  id          String  @id @default(cuid())
+  companyId   String
+  customerId  String?
+  agentId     String?
+  attendantId String?
+
+  channel       ConversationChannel
+  status        ConversationStatus  @default(EM_ANALISE)
+  leadValue     Decimal?            @db.Decimal(10, 2)
+  aiReason      String?
+  nextAction    String?
+  tone          String?
+  preview       String?
+  lastMessageAt DateTime?
+  lastReadAt    DateTime?
+
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customer  Customer? @relation(fields: [customerId], references: [id])
+  agent     Agent?    @relation(fields: [agentId], references: [id])
+  attendant User?     @relation("ConversationAttendant", fields: [attendantId], references: [id])
+
+  messages         Message[]
+  tags             ConversationTagLink[]
+  aiAudits         AIAudit[]
+  outboundMessages OutboundMessage[]
+  quotes           Quote[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([customerId])
+  @@index([companyId, status])
+  @@index([companyId, channel])
+  @@index([agentId])
+  @@index([lastMessageAt])
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String
+  authorName     String
+  role           MessageRole
+  text           String      @db.Text
+  isAiGenerated  Boolean     @default(false)
+  align          String?     @default("left")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([conversationId, createdAt])
+}
+
+/// Per-company tag reused by conversations and customers
+model Tag {
+  id        String @id @default(cuid())
+  companyId String
+  name      String
+  color     String @default("#6366f1")
+
+  company          Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversationTags ConversationTagLink[]
+  customerTags     CustomerTagLink[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model ConversationTagLink {
+  conversationId String
+  tagId          String
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  tag          Tag          @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, tagId])
+}
+
+model CustomerTagLink {
+  customerId String
+  tagId      String
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([customerId, tagId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — AI AGENTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Agent {
+  id           String      @id @default(cuid())
+  companyId    String
+  name         String
+  iconName     String?
+  status       AgentStatus @default(ONLINE)
+  description  String?
+  instructions String?     @db.Text  // assembled system prompt — consumed by automations
+  config       Json?                 // structured studio config (objetivo, tom, formato, restricoes, etc.)
+  modelId      String?
+  temperatura  Float       @default(0.3)
+
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  flowNodes     FlowNode[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([companyId, status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — KNOWLEDGE BASE
+// ─────────────────────────────────────────────────────────────────────────────
+
+model KnowledgeArticle {
+  id                 String                 @id @default(cuid())
+  companyId          String
+  parentId           String?
+  createdById        String?
+  publishedVersionId String?                @unique
+  draftVersionId     String?                @unique
+  title              String
+  category           String
+  content            String                 @db.Text
+  tags               String?                @db.Text
+  channels           String                 @default("[]") @db.Text
+  status             KnowledgeArticleStatus @default(RASCUNHO)
+
+  company          Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  parent           KnowledgeArticle?        @relation("KnowledgeArticleTree", fields: [parentId], references: [id])
+  children         KnowledgeArticle[]       @relation("KnowledgeArticleTree")
+  createdBy        User?                    @relation("KnowledgeArticleAuthor", fields: [createdById], references: [id])
+  versions         KnowledgeArticleVersion[] @relation("ArticleVersions")
+  publishedVersion KnowledgeArticleVersion? @relation("PublishedKnowledgeVersion", fields: [publishedVersionId], references: [id], onDelete: SetNull)
+  draftVersion     KnowledgeArticleVersion? @relation("DraftKnowledgeVersion", fields: [draftVersionId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([parentId])
+  @@index([createdById])
+}
+
+model KnowledgeArticleVersion {
+  id          String                 @id @default(cuid())
+  articleId   String
+  createdById String?
+  version     Int
+  status      KnowledgeArticleStatus @default(RASCUNHO)
+  content     String                 @db.Text
+  publishedAt DateTime?
+
+  article   KnowledgeArticle @relation("ArticleVersions", fields: [articleId], references: [id], onDelete: Cascade)
+  createdBy User?            @relation("KnowledgeArticleVersionAuthor", fields: [createdById], references: [id])
+  publishedByArticles KnowledgeArticle[] @relation("PublishedKnowledgeVersion")
+  draftForArticles     KnowledgeArticle[] @relation("DraftKnowledgeVersion")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([articleId, version])
+  @@index([articleId])
+  @@index([createdById])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — CUSTOMERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Customer {
+  id        String  @id @default(cuid())
+  companyId String
+  ownerId   String?
+
+  name          String
+  companyName   String?
+  phone         String?
+  email         String?
+  document      String?
+  city          String?
+  stage         CustomerStage  @default(QUALIFICACAO)
+  status        CustomerStatus @default(EM_ANALISE)
+  source        LeadSource?
+  segment       String?
+  value         Decimal?       @db.Decimal(12, 2)
+  lifetimeValue Decimal?       @db.Decimal(12, 2)
+  lastContactAt DateTime?
+
+  isVip Boolean @default(false)
+
+  // Denormalised AI snapshot for fast list rendering
+  aiScore          Int?
+  aiSentiment      Sentiment?
+  aiRisk           RiskLevel?
+  aiNextBestAction String?
+
+  businessAccountId String?
+  businessAccount   BusinessAccount? @relation(fields: [businessAccountId], references: [id], onDelete: SetNull)
+
+  company       Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  owner         User?                 @relation("CustomerOwner", fields: [ownerId], references: [id])
+  tags          CustomerTagLink[]
+  conversations Conversation[]
+  products      CustomerProduct[]
+  quotes        Quote[]
+  attendants    CustomerAttendant[]
+  chatHistory   CustomerChatHistory[]
+  aiFindings    CustomerAIFinding[]
+  kanbanCards   KanbanCard[]
+  segmentLinks  SegmentCustomer[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([companyId, stage])
+  @@index([ownerId])
+  @@index([email])
+}
+
+model CustomerProduct {
+  id          String        @id @default(cuid())
+  customerId  String
+  productName String
+  status      ProductStatus @default(ATIVO)
+  price       Decimal?      @db.Decimal(10, 2)
+  description String?
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([customerId])
+}
+
+model CustomerAttendant {
+  id          String  @id @default(cuid())
+  customerId  String
+  userId      String?
+  name        String
+  role        String
+  description String?
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id])
+
+  @@index([customerId])
+  @@index([userId])
+}
+
+model CustomerChatHistory {
+  id         String              @id @default(cuid())
+  customerId String
+  channel    ConversationChannel
+  occurredAt DateTime
+  topic      String?
+  sentiment  ChatSentiment       @default(NEUTRO)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([customerId, occurredAt])
+}
+
+model CustomerAIFinding {
+  id         String @id @default(cuid())
+  customerId String
+  text       String
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — PRODUCT CATALOG & QUOTES
+// ─────────────────────────────────────────────────────────────────────────────
+
+model ProductCategory {
+  id          String            @id @default(cuid())
+  companyId   String
+  name        String
+  description String?
+  status      CatalogItemStatus @default(ATIVO)
+
+  company  Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  products CatalogProduct[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@index([companyId, status])
+}
+
+model CatalogProduct {
+  id          String            @id @default(cuid())
+  companyId   String
+  categoryId  String?
+  name        String
+  sku         String?
+  description String?
+  unit        String            @default("un")
+  price       Decimal           @default(0) @db.Decimal(12, 2)
+  status      CatalogItemStatus @default(ATIVO)
+
+  company  Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  category ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  quoteItems QuoteItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, sku])
+  @@index([companyId])
+  @@index([categoryId])
+  @@index([companyId, status])
+}
+
+model Quote {
+  id             String      @id @default(cuid())
+  companyId      String
+  customerId     String
+  conversationId String?
+  generatedById  String?
+  number         Int
+  status         QuoteStatus @default(RASCUNHO)
+  validUntil     DateTime
+  notes          String?
+  freight        Decimal     @default(0) @db.Decimal(12, 2)
+  subtotal       Decimal     @default(0) @db.Decimal(12, 2)
+  discountTotal  Decimal     @default(0) @db.Decimal(12, 2)
+  total          Decimal     @default(0) @db.Decimal(12, 2)
+  sentAt         DateTime?
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customer     Customer      @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id])
+  generatedBy  User?         @relation("QuoteGeneratedBy", fields: [generatedById], references: [id])
+  items        QuoteItem[]
+  events       QuoteEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, number])
+  @@index([companyId])
+  @@index([customerId])
+  @@index([conversationId])
+  @@index([generatedById])
+  @@index([companyId, status])
+}
+
+model QuoteItem {
+  id             String             @id @default(cuid())
+  quoteId        String
+  productId      String?
+  productName    String
+  categoryName   String?
+  sku            String?
+  unit           String             @default("un")
+  quantity       Decimal            @db.Decimal(12, 2)
+  unitPrice      Decimal            @db.Decimal(12, 2)
+  discountType   QuoteDiscountType?
+  discountValue  Decimal?           @db.Decimal(12, 2)
+  subtotal       Decimal            @db.Decimal(12, 2)
+  discountAmount Decimal            @default(0) @db.Decimal(12, 2)
+  total          Decimal            @db.Decimal(12, 2)
+
+  quote   Quote           @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product CatalogProduct? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([quoteId])
+  @@index([productId])
+}
+
+model QuoteEvent {
+  id        String         @id @default(cuid())
+  quoteId   String
+  type      QuoteEventType
+  authorId  String?
+  authorName String       @default("Sistema")
+  message   String?
+  metadata  Json?
+
+  quote  Quote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  author User? @relation("QuoteEventAuthor", fields: [authorId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([quoteId])
+  @@index([authorId])
+  @@index([type])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — SALES TEAMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SalesTeam {
+  id             String   @id @default(cuid())
+  companyId      String
+  managerId      String?
+  name           String
+  targetValue    Decimal? @db.Decimal(14, 2)
+  pipelineValue  Decimal? @db.Decimal(14, 2)
+  conversionRate Decimal? @db.Decimal(5, 2)
+
+  company           Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  manager           User?              @relation("TeamManager", fields: [managerId], references: [id])
+  members           SalesTeamMember[]
+  channels          SalesTeamChannel[]
+  distributionRules DistributionRule[] @relation("RuleTargetTeam")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([managerId])
+}
+
+model SalesTeamMember {
+  id           String   @id @default(cuid())
+  teamId       String
+  userId       String
+  role         String?
+  leadCount    Int      @default(0)
+  revenueValue Decimal? @db.Decimal(14, 2)
+
+  team SalesTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([teamId])
+  @@index([userId])
+}
+
+model SalesTeamChannel {
+  teamId  String
+  channel ConversationChannel
+
+  team SalesTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, channel])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — DISTRIBUTION RULES
+// ─────────────────────────────────────────────────────────────────────────────
+
+model DistributionRule {
+  id           String         @id @default(cuid())
+  companyId    String
+  name         String
+  priority     Int            @default(0)
+  active       Boolean        @default(true)
+  conditions   Json // RuleCondition[] — [{field, operator, value}]
+  actionType   RuleActionType
+  targetTeamId String?
+  targetUserId String?
+  strategy     RuleStrategy   @default(ROUND_ROBIN)
+  fallback     RuleFallback   @default(QUEUE)
+
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  targetTeam SalesTeam? @relation("RuleTargetTeam", fields: [targetTeamId], references: [id])
+  targetUser User?      @relation("RuleTargetUser", fields: [targetUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId, active, priority])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — KANBAN BOARDS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model KanbanBoard {
+  id        String @id @default(cuid())
+  companyId String
+  name      String
+  sortOrder Int    @default(0)
+
+  company Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  columns KanbanColumn[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+}
+
+model KanbanColumn {
+  id          String  @id @default(cuid())
+  boardId     String
+  name        String
+  sortOrder   Int     @default(0)
+  color       String? @default("#e5e7eb")
+  probability Int? // 0-100 — probabilidade de fechamento nesta etapa
+  slaHours    Int? // horas máximas que um card pode ficar nesta etapa
+
+  board KanbanBoard  @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards KanbanCard[]
+
+  @@index([boardId])
+}
+
+model KanbanCard {
+  id              String           @id @default(cuid())
+  columnId        String
+  customerId      String?
+  assignedUserId  String? // responsável pelo negócio (diferente do dono do cliente)
+  initials        String?
+  name            String
+  description     String?
+  score           Int?
+  scoreBreakdown  Json?
+  priority        KanbanPriority   @default(MEDIA)
+  dots            Int              @default(0)
+  value           Decimal?         @db.Decimal(14, 2)
+  expectedCloseAt DateTime?
+  contactName     String?
+  contactEmail    String?
+  contactPhone    String?
+  closeType       KanbanCloseType? // GANHO | PERDIDO | CANCELADO
+  closeReason     String? // motivo de perda ou ganho
+
+  column       KanbanColumn     @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  customer     Customer?        @relation(fields: [customerId], references: [id])
+  assignedUser User?            @relation("KanbanCardAssignee", fields: [assignedUserId], references: [id])
+  activities   KanbanActivity[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([columnId])
+  @@index([customerId])
+  @@index([assignedUserId])
+}
+
+enum KanbanCloseType {
+  GANHO
+  PERDIDO
+  CANCELADO
+}
+
+enum KanbanActivityType {
+  NOTA
+  LIGACAO
+  EMAIL
+  REUNIAO
+  TAREFA
+  WHATSAPP
+}
+
+model KanbanActivity {
+  id         String             @id @default(cuid())
+  cardId     String
+  type       KanbanActivityType @default(NOTA)
+  title      String?
+  content    String
+  doneAt     DateTime?
+  authorName String             @default("Sistema")
+
+  card KanbanCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([cardId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — FLOWS & WORKFLOWS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Workflow {
+  id             String         @id @default(cuid())
+  companyId      String
+  name           String
+  description    String?
+  status         WorkflowStatus @default(RASCUNHO)
+  executionCount Int            @default(0)
+  lastRunAt      DateTime?
+
+  company Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  nodes   FlowNode[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([companyId, status])
+}
+
+model FlowNode {
+  id         String       @id @default(cuid())
+  workflowId String
+  agentId    String?
+  externalId String?
+  title      String
+  type       FlowNodeType
+  body       String?      @db.Text
+  sortOrder  Int          @default(0)
+
+  workflow         Workflow     @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  agent            Agent?       @relation(fields: [agentId], references: [id])
+  branches         FlowBranch[] @relation("NodeBranches")
+  incomingBranches FlowBranch[] @relation("BranchTarget")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workflowId])
+  @@index([agentId])
+}
+
+model FlowBranch {
+  id           String  @id @default(cuid())
+  nodeId       String
+  label        String
+  sortOrder    Int     @default(0)
+  targetNodeId String?
+
+  node       FlowNode  @relation("NodeBranches", fields: [nodeId], references: [id], onDelete: Cascade)
+  targetNode FlowNode? @relation("BranchTarget", fields: [targetNodeId], references: [id])
+
+  @@index([nodeId])
+  @@index([targetNodeId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — SEGMENTATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Segment {
+  id        String   @id @default(cuid())
+  companyId String
+  name      String
+  criteria  String?  @db.Text
+  value     Decimal? @db.Decimal(14, 2)
+
+  company    Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customers  SegmentCustomer[]
+  broadcasts Broadcast[]
+  campaigns  Campaign[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model SegmentCustomer {
+  segmentId  String
+  customerId String
+
+  segment  Segment  @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@id([segmentId, customerId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — BROADCASTS & CAMPAIGNS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Broadcast {
+  id           String              @id @default(cuid())
+  companyId    String
+  segmentId    String?
+  name         String
+  channel      ConversationChannel
+  status       BroadcastStatus     @default(RASCUNHO)
+  contactCount Int                 @default(0)
+  scheduledAt  DateTime?
+
+  company Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  segment Segment? @relation(fields: [segmentId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([segmentId])
+}
+
+model Campaign {
+  id        String         @id @default(cuid())
+  companyId String
+  segmentId String?
+  name      String
+  type      CampaignType
+  status    CampaignStatus @default(PLANEJADA)
+  budget    Decimal?       @db.Decimal(14, 2)
+  leadCount Int            @default(0)
+
+  company        Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  segment        Segment?        @relation(fields: [segmentId], references: [id])
+  dynamicQrLinks DynamicQrLink[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([segmentId])
+}
+
+model CompanyWhatsAppRouting {
+  id             String   @id @default(cuid())
+  companyId      String   @unique
+  activePhone    String?
+  backupPhones   String[] @default([])
+  defaultMessage String?  @db.Text
+  enabled        Boolean  @default(true)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+}
+
+model DynamicQrLink {
+  id              String          @id @default(cuid())
+  companyId       String
+  campaignId      String?
+  slug            String          @unique
+  name            String
+  messageTemplate String?         @db.Text
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
+  utmContent      String?
+  status          DynamicQrStatus @default(ATIVO)
+  clickCount      Int             @default(0)
+  lastClickedAt   DateTime?
+
+  company  Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  campaign Campaign?        @relation(fields: [campaignId], references: [id])
+  clicks   DynamicQrClick[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([campaignId])
+}
+
+model DynamicQrClick {
+  id               String   @id @default(cuid())
+  linkId           String
+  companyId        String
+  clickedAt        DateTime @default(now())
+  destinationPhone String
+  utmSource        String?
+  utmMedium        String?
+  utmCampaign      String?
+  utmContent       String?
+  referrer         String?
+
+  link    DynamicQrLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  company Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([linkId, clickedAt])
+  @@index([companyId, clickedAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — CONNECTORS (INTEGRATIONS)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Connector {
+  id          String          @id @default(cuid())
+  companyId   String
+  name        String
+  type        ConnectorType
+  status      ConnectorStatus @default(DESCONECTADO)
+  details     String?
+  config      Json?
+  lastEventAt DateTime?
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@index([companyId, type])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — AI AUDITS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model AIAudit {
+  id               String    @id @default(cuid())
+  companyId        String
+  conversationId   String?
+  conversationName String?
+  score            Int?
+  riskLevel        RiskLevel @default(BAIXO)
+  recommendation   String?
+  sentiment        Sentiment @default(NEUTRO)
+  category              String?   // "TECNICA" | "SOFT_SKILLS"
+  dimension             String?   // "qualidade" | "comunicacao" | "inteligencia-emocional" | etc.
+  attendantId           String?
+  suggestions           Json?     // [{ title, description, timeframe, impact }]
+  suggestionsSummary    String?
+
+  company      Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversation Conversation?    @relation(fields: [conversationId], references: [id])
+  attendant    User?            @relation("AIAuditAttendant", fields: [attendantId], references: [id], onDelete: SetNull)
+  findings     AIAuditFinding[]
+
+  createdAt DateTime @default(now())
+
+  @@index([companyId])
+  @@index([conversationId])
+  @@index([companyId, riskLevel])
+  @@index([companyId, category])
+  @@index([companyId, dimension])
+  @@index([attendantId])
+}
+
+model AIAuditFinding {
+  id      String @id @default(cuid())
+  auditId String
+  text    String
+
+  audit AIAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@index([auditId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — METRICS / KPIs
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Append-only KPI snapshot per company. Query ORDER BY createdAt DESC LIMIT 1 for current value.
+model Metric {
+  id        String  @id @default(cuid())
+  companyId String
+  label     String
+  value     String
+  change    String?
+  period    String?
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([companyId])
+  @@index([companyId, label])
+  @@index([companyId, period])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OPERATIONAL — WORKER AUDIT LOG
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum WorkerRunStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+  PARTIAL // completed with some item-level errors
+}
+
+/// One execution of a worker — written at start, updated at end.
+model WorkerRun {
+  id        String          @id @default(cuid())
+  worker    String // e.g. "segment-sync", "card-score"
+  trigger   String // "cron" | "manual" | "event:<name>"
+  status    WorkerRunStatus @default(RUNNING)
+  companyId String? // null = ran across all companies
+
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  durationMs Int?
+
+  itemsTotal     Int?
+  itemsProcessed Int?
+  itemsFailed    Int?
+
+  meta  Json? // arbitrary input context (filters, ids, etc.)
+  error String? // top-level error message if status=FAILED
+
+  logs WorkerLog[]
+
+  @@index([worker])
+  @@index([worker, startedAt])
+  @@index([status])
+  @@index([companyId])
+}
+
+/// Fine-grained log line attached to a WorkerRun.
+model WorkerLog {
+  id      String  @id @default(cuid())
+  runId   String
+  level   String // "info" | "warn" | "error"
+  message String
+  itemId  String? // e.g. customerId, cardId — makes log searchable by entity
+  detail  Json? // extra structured data
+
+  createdAt DateTime @default(now())
+
+  run WorkerRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([runId, level])
+  @@index([itemId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MESSAGING QUEUE — INBOX / OUTBOX
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Fila de entrada: cada mensagem recebida do WhatsApp é enfileirada aqui pelo webhook.
+/// O worker inbound-processor processa de forma assíncrona com retry e auditoria.
+model InboundMessage {
+  id            String        @id @default(cuid())
+  companyId     String
+  instanceId    String // nome da instância Evolution
+  waMessageId   String // key.id do payload Evolution — garante idempotência
+  senderPhone   String
+  messageType   String // "conversation" | "imageMessage" | "audioMessage" | etc.
+  payload       Json // payload bruto do EvoMessage inteiro
+  status        InboundStatus @default(PENDING)
+  attempts      Int           @default(0)
+  nextAttemptAt DateTime      @default(now())
+  processedAt   DateTime?
+  error         String?
+  receivedAt    DateTime      @default(now())
+  createdAt     DateTime      @default(now())
+
+  @@unique([instanceId, waMessageId])
+  @@index([status, nextAttemptAt])
+  @@index([companyId])
+}
+
+/// Fila de saída: cada mensagem a enviar para o cliente é enfileirada aqui.
+/// O worker outbound-sender lê com FOR UPDATE SKIP LOCKED e envia via Evolution API.
+model OutboundMessage {
+  id              String         @id @default(cuid())
+  companyId       String
+  conversationId  String
+  instanceId      String
+  recipientPhone  String
+  messageType     String         @default("text")
+  body            String?        @db.Text
+  payload         Json?
+  status          OutboundStatus @default(QUEUED)
+  priority        Int            @default(5)
+  attempts        Int            @default(0)
+  maxAttempts     Int            @default(5)
+  nextAttemptAt   DateTime       @default(now())
+  clientRequestId String?
+  waMessageId     String?
+  error           String?
+  createdByUserId String?
+  sentAt          DateTime?
+  failedAt        DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([clientRequestId])
+  @@index([status, nextAttemptAt, priority])
+  @@index([conversationId])
+  @@index([companyId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUPPORT TICKETS
+// ─────────────────────────────────────────────────────────────────────────────
+
+model SupportTicket {
+  id             String  @id @default(cuid())
+  companyId      String
+  code           String
+  title          String
+  customer       String
+  contact        String
+  channel        String
+  conversationId String?
+  category       String
+  priority       String
+  status         String  @default("Novo")
+  team           String
+  assignee       String?
+  slaState       String  @default("No prazo")
+  slaDueAt       DateTime
+  summary        String? @db.Text
+  tags           String[] @default([])
+
+  company  Company                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  activity SupportTicketActivity[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@index([companyId, status])
+}
+
+model BusinessAccount {
+  id        String @id @default(cuid())
+  companyId String
+
+  name     String
+  cnpj     String?
+  website  String?
+  phone    String?
+  email    String?
+  city     String?
+  state    String?
+
+  industry String?
+  size     String?
+  status   String  @default("Prospect")
+  value    Decimal? @db.Decimal(12, 2)
+  ltv      Decimal? @db.Decimal(12, 2)
+  notes    String?  @db.Text
+
+  company  Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contacts Customer[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([companyId, status])
+}
+
+model SupportTicketActivity {
+  id         String        @id @default(cuid())
+  ticketId   String
+  authorName String
+  text       String        @db.Text
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([ticketId])
+}

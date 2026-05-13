@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "Agent" ADD COLUMN     "config" JSONB,
+ADD COLUMN     "temperatura" DOUBLE PRECISION NOT NULL DEFAULT 0.3;

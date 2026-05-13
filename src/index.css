@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Landing page design tokens (marketing.chat-inspired) ── */
+:root {
+  --cobalt:     #16a34a;
+  --sapphire:   #15803d;
+  --aqua:       #4ade80;
+  --pearl:      #bbf7d0;
+  --lk-black:   #0b0f0c;
+  --lk-white:   #fff;
+  --pearl-bg:   #f7faf8;
+  --lk-bg-0:    #fff;
+  --lk-bg-1:    #fafbfa;
+  --lk-bg-2:    #f3f7f4;
+  --lk-line:    #e4ede7;
+  --lk-line-2:  #d2e4d8;
+  --lk-ink-0:   #0b1a0e;
+  --lk-ink-1:   #374a3c;
+  --lk-ink-2:   #5f7566;
+  --lk-ink-3:   #8aa090;
+  --brand-gradient: linear-gradient(90deg, #bbf7d0, #4ade80 33%, #16a34a 66%, #15803d);
+}
+
+/* Gradient text */
+.grad-text {
+  background: var(--brand-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Oval underline decoration */
+.oval-wrap {
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+}
+.oval-wrap::after {
+  content: "";
+  position: absolute;
+  left: -3%;
+  right: -3%;
+  top: 10%;
+  bottom: 8%;
+  border: 2.5px solid var(--sapphire);
+  border-radius: 999px;
+  transform: rotate(-2deg);
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* Infinite ticker */
+@keyframes lk-ticker {
+  0%  { transform: translateX(0); }
+  to  { transform: translateX(-50%); }
+}
+.lk-ticker-track {
+  animation: lk-ticker 36s linear infinite;
+}
+
+@layer base {
+  :root {
+    --background: 210 33% 98%;
+    --foreground: 224 36% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 36% 12%;
+    --primary: 187 84% 30%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 216 22% 94%;
+    --secondary-foreground: 224 36% 16%;
+    --muted: 216 22% 94%;
+    --muted-foreground: 220 10% 43%;
+    --accent: 34 92% 91%;
+    --accent-foreground: 24 75% 25%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 20% 88%;
+    --input: 214 20% 88%;
+    --ring: 187 84% 30%;
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family:
+      Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+}

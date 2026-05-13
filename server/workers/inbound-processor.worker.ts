@@ -1,0 +1,202 @@
+/**
+ * inbound-processor.worker
+ *
+ * Reads InboundMessage rows with status=PENDING and processes each one:
+ * upserts Customer + Conversation, creates Message. Runs every 5 seconds.
+ *
+ * Trigger: cron (5s) | manual | event:inbound.created
+ */
+
+import { db } from "../db.js"
+import { runWorker, type WorkerContext } from "./runner.js"
+import { jidToPhone, extractText, mediaPlaceholder, calcNextAttempt } from "../utils/evolution.js"
+import { resolveAttendant, assignConversation } from "../lib/distributionEngine.js"
+
+const BATCH_SIZE   = 50
+const MAX_ATTEMPTS = 5
+
+const TEXT_TYPES = new Set(["conversation", "extendedTextMessage"])
+
+interface EvoMessage {
+  key?: { remoteJid?: string; fromMe?: boolean; id?: string }
+  message?: Record<string, unknown>
+  messageType?: string
+  pushName?: string
+  messageTimestamp?: number
+}
+
+async function processInbound(inbound: {
+  id: string
+  companyId: string
+  instanceId: string
+  senderPhone: string
+  messageType: string
+  payload: unknown
+}) {
+  const msg        = inbound.payload as EvoMessage
+  const pushName   = msg.pushName ?? inbound.senderPhone
+  const msgType    = inbound.messageType
+  const timestamp  = msg.messageTimestamp
+    ? new Date(Number(msg.messageTimestamp) * 1000)
+    : new Date()
+
+  const rawText = extractText(msg.message)
+  const text    = rawText || (TEXT_TYPES.has(msgType) ? "" : mediaPlaceholder(msgType))
+
+  const { convId, isNew } = await db.$transaction(async (tx) => {
+    // 1. Upsert Customer
+    const existing = await tx.customer.findFirst({
+      where: { companyId: inbound.companyId, phone: inbound.senderPhone },
+      select: { id: true },
+    })
+
+    const customer = existing
+      ? await tx.customer.update({
+          where: { id: existing.id },
+          data: { name: pushName || inbound.senderPhone, lastContactAt: timestamp },
+        })
+      : await tx.customer.create({
+          data: {
+            companyId: inbound.companyId,
+            name: pushName || inbound.senderPhone,
+            phone: inbound.senderPhone,
+            status: "EM_ANALISE",
+            stage: "QUALIFICACAO",
+            lastContactAt: timestamp,
+          },
+        })
+
+    // 2. Upsert Conversation (reuse open one, else create)
+    const existingConv = await tx.conversation.findFirst({
+      where: {
+        companyId: inbound.companyId,
+        customerId: customer.id,
+        status: { notIn: ["ENCERRADO", "ARQUIVADO", "PARA_EXCLUIR"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    })
+
+    const conversation = existingConv
+      ? await tx.conversation.update({
+          where: { id: existingConv.id },
+          data: { preview: text.slice(0, 200) || msgType, lastMessageAt: timestamp, status: "EM_ANALISE" },
+        })
+      : await tx.conversation.create({
+          data: {
+            companyId: inbound.companyId,
+            customerId: customer.id,
+            channel: "WHATSAPP",
+            status: "EM_ANALISE",
+            preview: text.slice(0, 200) || msgType,
+            lastMessageAt: timestamp,
+          },
+        })
+
+    // 3. Create Message
+    await tx.message.create({
+      data: {
+        conversationId: conversation.id,
+        authorName: pushName || inbound.senderPhone,
+        role: "CLIENTE",
+        text: text || mediaPlaceholder(msgType),
+        isAiGenerated: false,
+        align: "left",
+        createdAt: timestamp,
+      },
+    })
+
+    return { convId: conversation.id, isNew: !existingConv }
+  })
+
+  // 4. Auto-assign via distribution rules (only for new conversations without an attendant)
+  if (isNew) {
+    const convWithAttendant = await db.conversation.findUnique({
+      where: { id: convId },
+      select: { attendantId: true },
+    })
+    if (!convWithAttendant?.attendantId) {
+      const targetUserId = await resolveAttendant(convId, inbound.companyId)
+      if (targetUserId && targetUserId !== "__EXISTING_OWNER__") {
+        await assignConversation(convId, targetUserId, inbound.companyId)
+      }
+    }
+  }
+}
+
+export async function runInboundProcessor(
+  trigger: "cron" | "manual" | `event:${string}` = "cron",
+  ctx: WorkerContext = {},
+) {
+  return runWorker("inbound-processor", trigger, ctx, async (handle) => {
+    const now = new Date()
+
+    const pending = await db.inboundMessage.findMany({
+      where: {
+        status: "PENDING",
+        nextAttemptAt: { lte: now },
+        ...(ctx.companyId ? { companyId: ctx.companyId } : {}),
+      },
+      orderBy: { nextAttemptAt: "asc" },
+      take: BATCH_SIZE,
+    })
+
+    if (pending.length === 0) {
+      await handle.finish({ total: 0, processed: 0, failed: 0 })
+      return
+    }
+
+    await handle.log("info", `Processando ${pending.length} mensagem(ns) inbound`)
+
+    let processed = 0
+    let failed    = 0
+
+    for (const inbound of pending) {
+      // Claim atomically — prevents double-processing if two processes run
+      const claimed = await db.inboundMessage.updateMany({
+        where: { id: inbound.id, status: "PENDING" },
+        data:  { status: "PROCESSING" },
+      })
+      if (claimed.count === 0) continue
+
+      try {
+        await processInbound(inbound)
+
+        await db.inboundMessage.update({
+          where: { id: inbound.id },
+          data:  { status: "DONE", processedAt: new Date(), error: null },
+        })
+
+        await handle.log("info", `Processado: ${inbound.senderPhone} [${inbound.messageType}]`, {
+          itemId: inbound.id,
+          detail: { waMessageId: inbound.waMessageId },
+        })
+
+        processed++
+      } catch (err) {
+        const msg          = err instanceof Error ? err.message : String(err)
+        const nextAttempts = inbound.attempts + 1
+        const isFinal      = nextAttempts >= MAX_ATTEMPTS
+
+        await db.inboundMessage.update({
+          where: { id: inbound.id },
+          data: {
+            status:        isFinal ? "FAILED" : "PENDING",
+            attempts:      nextAttempts,
+            nextAttemptAt: isFinal ? new Date() : calcNextAttempt(nextAttempts),
+            error:         msg,
+          },
+        })
+
+        await handle.log("error",
+          `Falha (tentativa ${nextAttempts}/${MAX_ATTEMPTS}): ${msg}`,
+          { itemId: inbound.id, detail: { phone: inbound.senderPhone } },
+        )
+
+        failed++
+      }
+    }
+
+    await handle.finish({ total: pending.length, processed, failed })
+  })
+}

@@ -1,0 +1,171 @@
+import {
+  Activity,
+  Bot,
+  BookOpenText,
+  Building2,
+  ClipboardList,
+  Kanban,
+  LayoutDashboard,
+  Layers3,
+  Mail,
+  Megaphone,
+  MessageCircle,
+  LifeBuoy,
+  Package,
+  PackageCheck,
+  Radio,
+  Settings,
+  ShieldCheck,
+  Shuffle,
+  Tags,
+  TimerReset,
+  UserRound,
+  Users,
+  Workflow,
+} from "lucide-react"
+
+export const navItems = [
+  { id: "atendimento",   label: "Atendimento",          icon: MessageCircle },
+  { id: "emails",        label: "E-mails",              icon: Mail },
+  { id: "suporte",       label: "Tickets",              icon: LifeBuoy },
+  { id: "base-conhecimento", label: "Base de Conhecimento", icon: BookOpenText },
+  { id: "suporte-categorias", label: "Categorias",      icon: Tags },
+  { id: "suporte-sla",   label: "Nível de serviço",     icon: TimerReset },
+  { id: "quadros",       label: "Quadros comerciais",   icon: Kanban },
+  { id: "pipelines",     label: "Pipelines",            icon: LayoutDashboard },
+  { id: "empresas",      label: "Empresas",             icon: Building2 },
+  { id: "clientes",      label: "Clientes",             icon: Users },
+  { id: "orcamentos",    label: "Orçamentos",           icon: PackageCheck },
+  { id: "produtos",      label: "Produtos",             icon: Package },
+  { id: "segmentacao",   label: "Segmentação",          icon: Layers3 },
+  { id: "agentes",       label: "Agentes IA",           icon: Bot },
+  { id: "rops",          label: "ROPs",                 icon: ClipboardList },
+  { id: "automacoes",    label: "Automações",           icon: Workflow },
+  { id: "transmissao",   label: "Transmissão",          icon: Radio },
+  { id: "campanhas",     label: "Campanhas",            icon: Megaphone },
+  { id: "equipes",       label: "Equipes de venda",     icon: UserRound },
+  { id: "distribuicao",  label: "Distribuição",         icon: Shuffle },
+  { id: "auditorias",    label: "Auditorias & Análises",icon: ShieldCheck },
+  { id: "relatorios",    label: "Relatórios",           icon: Activity },
+  { id: "configuracoes", label: "Configurações",        icon: Settings },
+] as const
+
+export type ViewId = (typeof navItems)[number]["id"]
+
+export const viewCopy: Record<ViewId, { title: string; subtitle: string; action: string }> = {
+  atendimento: {
+    title: "Central de atendimento",
+    subtitle: "Multiagente, multicanal e assistida por IA",
+    action: "Novo atendimento",
+  },
+  emails: {
+    title: "E-mails",
+    subtitle: "Atendimento por e-mail conectado ao histórico do cliente",
+    action: "Novo e-mail",
+  },
+  suporte: {
+    title: "Tickets",
+    subtitle: "Tickets, SLA, categorias e filas de atendimento",
+    action: "Novo chamado",
+  },
+  "suporte-categorias": {
+    title: "Categorias",
+    subtitle: "Classificação operacional para tickets, equipes e SLAs",
+    action: "Nova categoria",
+  },
+  "suporte-sla": {
+    title: "Nível de serviço",
+    subtitle: "Políticas de primeira resposta, resolução e escalação",
+    action: "Nova política",
+  },
+  pipelines: {
+    title: "Pipelines",
+    subtitle: "Crie e gerencie pipelines comerciais com colunas, automações e equipes",
+    action: "Novo pipeline",
+  },
+  quadros: {
+    title: "Quadros comerciais",
+    subtitle: "Pipeline visual com contato, bot, coluna e dados do usuário",
+    action: "Adicionar cartão",
+  },
+  agentes: {
+    title: "Agentes IA",
+    subtitle: "Modelos, instruções e regras de resposta conectados aos fluxos",
+    action: "Novo agente",
+  },
+  rops: {
+    title: "ROPs",
+    subtitle: "Respostas operacionais padronizadas para WhatsApp e e-mail",
+    action: "Nova ROP",
+  },
+  "base-conhecimento": {
+    title: "Base de Conhecimento",
+    subtitle: "Procedimentos, instruções e documentação para atendimento",
+    action: "Novo procedimento",
+  },
+  automacoes: {
+    title: "Fluxos de conversa",
+    subtitle: "Construtor visual para agentes, mensagens e condições",
+    action: "Novo fluxo",
+  },
+  segmentacao: {
+    title: "Segmentação",
+    subtitle: "Agrupe leads e clientes por intenção, perfil, produto e comportamento",
+    action: "Novo segmento",
+  },
+  transmissao: {
+    title: "Transmissão",
+    subtitle: "Envios em massa controlados por canal, segmento e regras de opt-in",
+    action: "Nova transmissão",
+  },
+  campanhas: {
+    title: "Campanhas",
+    subtitle: "Planejamento, execução e análise de campanhas comerciais",
+    action: "Nova campanha",
+  },
+  empresas: {
+    title: "Empresas",
+    subtitle: "Cadastro e visão consolidada de contas B2B e seus contatos",
+    action: "Nova empresa",
+  },
+  clientes: {
+    title: "Clientes",
+    subtitle: "Visão compacta da base, histórico e oportunidades",
+    action: "Novo cliente",
+  },
+  orcamentos: {
+    title: "Orçamentos",
+    subtitle: "Propostas comerciais e esteira de aprovação vinculadas ao CRM",
+    action: "Novo orçamento",
+  },
+  produtos: {
+    title: "Produtos",
+    subtitle: "Catálogo comercial, preços, SKUs e categorias",
+    action: "Novo produto",
+  },
+  equipes: {
+    title: "Equipes de venda",
+    subtitle: "Cadastro, gestão e metas dos times comerciais",
+    action: "Nova equipe",
+  },
+  distribuicao: {
+    title: "Distribuição de atendimentos",
+    subtitle: "Regras automáticas de roteamento de leads por canal, perfil e condições",
+    action: "Nova regra",
+  },
+  auditorias: {
+    title: "Auditorias & Análises",
+    subtitle: "Qualidade, compliance, soft skills e desenvolvimento comportamental via IA",
+    action: "Nova auditoria",
+  },
+  relatorios: {
+    title: "Relatórios",
+    subtitle: "Indicadores de operação, conversão e performance dos agentes",
+    action: "Novo relatório",
+  },
+  configuracoes: {
+    title: "Configurações",
+    subtitle: "Canais, usuários, permissões e integrações da operação",
+    action: "Configurar",
+  },
+}
