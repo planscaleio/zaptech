@@ -9,7 +9,13 @@ const router = Router()
 export interface SegmentFilter {
   field: string
   operator: string
-  value: string | number
+  value: string | number | Array<string | number>
+}
+
+function enumFilter(operator: string, value: SegmentFilter["value"]) {
+  if (operator === "in" && Array.isArray(value)) return { in: value.map(String) }
+  if (operator === "notIn" && Array.isArray(value)) return { notIn: value.map(String) }
+  return { equals: Array.isArray(value) ? String(value[0] ?? "") : String(value) }
 }
 
 // ─── Build Prisma WHERE from filters ─────────────────────────────────────────
@@ -22,19 +28,19 @@ export function buildWhere(companyId: string, filters: SegmentFilter[]): Prisma.
 
     switch (field) {
       case "status":
-        AND.push({ status: { equals: value as string } } as Prisma.CustomerWhereInput)
+        AND.push({ status: enumFilter(operator, value) } as Prisma.CustomerWhereInput)
         break
       case "stage":
-        AND.push({ stage: { equals: value as string } } as Prisma.CustomerWhereInput)
+        AND.push({ stage: enumFilter(operator, value) } as Prisma.CustomerWhereInput)
         break
       case "source":
-        AND.push({ source: { equals: value as string } } as Prisma.CustomerWhereInput)
+        AND.push({ source: enumFilter(operator, value) } as Prisma.CustomerWhereInput)
         break
       case "aiSentiment":
-        AND.push({ aiSentiment: { equals: value as string } } as Prisma.CustomerWhereInput)
+        AND.push({ aiSentiment: enumFilter(operator, value) } as Prisma.CustomerWhereInput)
         break
       case "aiRisk":
-        AND.push({ aiRisk: { equals: value as string } } as Prisma.CustomerWhereInput)
+        AND.push({ aiRisk: enumFilter(operator, value) } as Prisma.CustomerWhereInput)
         break
       case "aiScore": {
         const n = Number(value)
