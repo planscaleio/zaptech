@@ -43,6 +43,13 @@ interface Ticket {
   activity: TicketActivity[]
 }
 
+interface SupportUser {
+  id: string
+  name: string
+  email: string
+  role: string
+}
+
 const CHANNELS = ["WhatsApp", "E-mail", "Telefone", "Chat"] as const
 const STATUSES: TicketStatus[] = ["Novo", "Triagem", "Em atendimento", "Aguardando cliente", "Resolvido"]
 
@@ -80,6 +87,111 @@ function todayPlusHours(h: number) {
   return new Date(Date.now() + h * 3_600_000).toISOString().slice(0, 16)
 }
 
+function prioritySlaHours(priority: string) {
+  if (priority === "Crítica") return 1
+  if (priority === "Alta") return 4
+  if (priority === "Baixa") return 72
+  return 24
+}
+
+function AssigneePicker({
+  value,
+  users,
+  onChange,
+  placeholder = "Buscar responsável...",
+}: {
+  value: string
+  users: SupportUser[]
+  onChange: (value: string) => void
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState("")
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClick(event: MouseEvent) {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        setOpen(false)
+        setSearch("")
+      }
+    }
+
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [])
+
+  const options = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    const base = users.map((user) => user.name).filter(Boolean)
+    const unique = Array.from(new Set(value && !base.includes(value) ? [value, ...base] : base))
+
+    return unique.filter((name) => !term || name.toLowerCase().includes(term))
+  }, [search, users, value])
+
+  function selectAssignee(name: string) {
+    onChange(name)
+    setOpen(false)
+    setSearch("")
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        className="flex h-7 w-full items-center justify-between gap-2 rounded-md border bg-white px-2 text-left text-xs transition-colors hover:bg-muted/30"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className={cn("min-w-0 flex-1 truncate", !value && "text-muted-foreground")}>
+          {value || "Sem responsável"}
+        </span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-64 overflow-hidden rounded-lg border bg-white shadow-lg">
+          <div className="flex items-center gap-2 border-b px-2 py-1.5">
+            <Search className="size-3.5 shrink-0 text-muted-foreground" />
+            <input
+              autoFocus
+              className="h-7 min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+              placeholder={placeholder}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+          <div className="max-h-56 overflow-y-auto py-1">
+            <button
+              type="button"
+              className={cn(
+                "flex w-full items-center px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50",
+                !value && "font-semibold text-primary",
+              )}
+              onClick={() => selectAssignee("")}
+            >
+              Sem responsável
+            </button>
+            {options.map((name) => (
+              <button
+                key={name}
+                type="button"
+                className={cn(
+                  "flex w-full items-center px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50",
+                  value === name && "font-semibold text-primary",
+                )}
+                onClick={() => selectAssignee(name)}
+              >
+                <span className="truncate">{name}</span>
+              </button>
+            ))}
+            {options.length === 0 && (
+              <p className="px-3 py-2 text-xs text-muted-foreground">Nenhuma pessoa encontrada.</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const emptyForm = {
@@ -100,6 +212,7 @@ export default function SuportePage() {
   const companyId = auth?.companyId ?? ""
 
   const [tickets, setTickets] = useState<Ticket[]>([])
+  const [users, setUsers] = useState<SupportUser[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string>("")
   const [query, setQuery] = useState("")
@@ -122,7 +235,6 @@ export default function SuportePage() {
   // Activity note
   const [note, setNote] = useState("")
   const [addingNote, setAddingNote] = useState(false)
-  const activityRef = useRef<HTMLDivElement>(null)
 
   async function loadTickets() {
     if (!companyId) return
@@ -138,6 +250,14 @@ export default function SuportePage() {
   }
 
   useEffect(() => { loadTickets() }, [companyId])
+
+  useEffect(() => {
+    if (!companyId) return
+    fetch(`/api/teams/users?companyId=${companyId}`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data: SupportUser[]) => setUsers(Array.isArray(data) ? data : []))
+      .catch(() => setUsers([]))
+  }, [companyId])
 
   const filteredTickets = useMemo(() => {
     const term = query.trim().toLowerCase()
@@ -159,10 +279,6 @@ export default function SuportePage() {
     setEditTeam(selected.team)
     setEditAssignee(selected.assignee ?? "")
   }, [selected?.id])
-
-  useEffect(() => {
-    if (activityRef.current) activityRef.current.scrollTop = activityRef.current.scrollHeight
-  }, [selected?.activity.length])
 
   const totals = useMemo(() => ({
     open: tickets.filter((t) => t.status !== "Resolvido").length,
@@ -202,7 +318,13 @@ export default function SuportePage() {
       const res = await fetch(`/api/support-tickets/${selected.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: editStatus, priority: editPriority, team: editTeam, assignee: editAssignee }),
+        body: JSON.stringify({
+          status: editStatus,
+          priority: editPriority,
+          team: editTeam,
+          assignee: editAssignee,
+          authorName: auth?.name ?? "Atendente",
+        }),
       })
       const data = await res.json()
       if (!res.ok) return
@@ -210,6 +332,14 @@ export default function SuportePage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  function updateFormPriority(priority: string) {
+    setForm((current) => ({
+      ...current,
+      priority,
+      slaDueAt: todayPlusHours(prioritySlaHours(priority)),
+    }))
   }
 
   async function addNote() {
@@ -346,7 +476,7 @@ export default function SuportePage() {
                 <Badge className={slaColors[selected.slaState] ?? ""} variant="outline">{selected.slaState}</Badge>
               </div>
 
-              <div ref={activityRef} className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
                 {/* Edit bar */}
                 <div className="mb-4 rounded-xl border bg-muted/20 p-3">
                   <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Atendimento</p>
@@ -380,12 +510,7 @@ export default function SuportePage() {
                     </div>
                     <div>
                       <p className="mb-1 text-[10px] text-muted-foreground">Responsável</p>
-                      <Input
-                        className="h-7 text-xs"
-                        placeholder="Nome do atendente"
-                        value={editAssignee}
-                        onChange={(e) => setEditAssignee(e.target.value)}
-                      />
+                      <AssigneePicker value={editAssignee} users={users} onChange={setEditAssignee} />
                     </div>
                   </div>
                   {isDirty && (
@@ -589,7 +714,7 @@ export default function SuportePage() {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium">Prioridade</label>
-                <Select value={form.priority} onValueChange={(v) => setForm((f) => ({ ...f, priority: v }))}>
+                <Select value={form.priority} onValueChange={updateFormPriority}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{supportPriorities.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
                 </Select>
@@ -604,7 +729,11 @@ export default function SuportePage() {
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium">Responsável</label>
-              <Input placeholder="Nome do atendente (opcional)" value={form.assignee} onChange={(e) => setForm((f) => ({ ...f, assignee: e.target.value }))} />
+              <AssigneePicker
+                value={form.assignee}
+                users={users}
+                onChange={(assignee) => setForm((current) => ({ ...current, assignee }))}
+              />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium">Vencimento do SLA</label>
