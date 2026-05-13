@@ -540,7 +540,7 @@ export default function OrcamentosPage() {
                   Marcar como Enviado
                 </Button>
               )}
-              {["RASCUNHO", "ENVIADO", "EXPIRADO"].includes(selectedQuote?.status ?? "") && (
+              {selectedQuote && ["RASCUNHO", "ENVIADO", "EXPIRADO"].includes(selectedQuote.status) && (
                 <>
                   <Button variant="outline" size="sm" className="flex-1" onClick={() => { updateQuoteStatus(selectedQuote, "ACEITO"); setSelectedQuote(null) }}>
                     <CheckCircle2 className="size-4" /> Aceitar
