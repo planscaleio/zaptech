@@ -148,6 +148,7 @@ router.get("/:id", async (req: Request, res: Response) => {
       },
       attendants: {
         select: {
+          name: true,
           role: true,
           description: true,
           user: { select: { id: true, name: true, role: true } },
@@ -203,8 +204,8 @@ router.get("/:id", async (req: Request, res: Response) => {
 
   return res.json({
     ...customer,
-    tags: customer.tags.map((t) => t.tag),
-    segments: customer.segmentLinks.map((sl) => sl.segment),
+    tags: customer.tags.map((t) => t.tag).filter(Boolean),
+    segments: customer.segmentLinks.map((sl) => sl.segment).filter(Boolean),
   })
 })
 

@@ -61,7 +61,7 @@ interface KanbanCardRef {
   value: string | null
   expectedCloseAt: string | null
   createdAt: string
-  column: { id: string; name: string; board: { id: string; name: string } }
+  column: { id: string; name: string; board: { id: string; name: string } | null } | null
 }
 
 interface QuoteRef {
@@ -87,8 +87,8 @@ interface CustomerDetail extends CustomerSummary {
   owner: { id: string; name: string; role: string } | null
   products: Product[]
   quotes: QuoteRef[]
-  attendants: { role: string; description: string | null; user: { id: string; name: string; role: string } }[]
-  segments: { id: string; name: string }[]
+  attendants: { name?: string | null; role: string; description: string | null; user: { id: string; name: string; role: string } | null }[]
+  segments: ({ id: string; name: string } | null)[]
   businessAccount: { id: string; name: string; status: string; industry: string | null } | null
   kanbanCards: KanbanCardRef[]
   conversations: {
@@ -953,9 +953,9 @@ export default function ClientesPage() {
                     <div className="rounded-lg border p-3">
                       <p className="mb-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Atendentes</p>
                       <div className="grid gap-2 sm:grid-cols-2">
-                        {sc.attendants.map((a) => (
-                          <div key={a.user.id} className="rounded-md border bg-muted/20 p-2.5">
-                            <p className="truncate text-sm font-semibold">{a.user.name}</p>
+                        {sc.attendants.map((a, index) => (
+                          <div key={a.user?.id ?? `${a.role}-${index}`} className="rounded-md border bg-muted/20 p-2.5">
+                            <p className="truncate text-sm font-semibold">{a.user?.name ?? a.name ?? "Atendente sem vínculo"}</p>
                             <p className="text-xs text-muted-foreground">{a.role}</p>
                             {a.description && <p className="mt-1.5 line-clamp-2 text-xs leading-4 text-muted-foreground">{a.description}</p>}
                           </div>
@@ -1002,7 +1002,9 @@ export default function ClientesPage() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-sm font-semibold">{card.name}</p>
-                              <p className="mt-0.5 text-xs text-muted-foreground">{card.column.board.name} → {card.column.name}</p>
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {card.column?.board?.name ?? "Pipeline removido"} → {card.column?.name ?? "Etapa removida"}
+                              </p>
                             </div>
                             {card.score != null && (
                               <span className={cn(
@@ -1035,14 +1037,14 @@ export default function ClientesPage() {
 
                 {/* ── Segmentos ── */}
                 <TabsContent value="segmentos" className="mt-4">
-                  {sc.segments.length === 0 ? (
+                  {sc.segments.filter(Boolean).length === 0 ? (
                     <div className="rounded-lg border bg-muted/20 py-8 text-center text-sm text-muted-foreground">
                       <LayoutGrid className="mx-auto mb-2 size-7 opacity-40" />
                       Cliente não pertence a nenhum segmento.
                     </div>
                   ) : (
                     <div className="flex flex-wrap gap-2">
-                      {sc.segments.map((seg) => (
+                      {sc.segments.filter((seg): seg is { id: string; name: string } => Boolean(seg)).map((seg) => (
                         <div key={seg.id} className="flex items-center gap-2 rounded-full border bg-primary/5 px-3 py-1.5">
                           <LayoutGrid className="size-3.5 text-primary" />
                           <span className="text-sm font-medium">{seg.name}</span>

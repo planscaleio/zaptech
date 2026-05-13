@@ -1,7 +1,8 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Outlet, NavLink, useLocation, Navigate } from "react-router-dom"
 import { useAuth } from "@/hooks/useAuth"
 import { useUnreadCount } from "@/hooks/useUnreadCount"
+import { clearStoredAuth, redirectToLogin } from "@/lib/auth"
 import { navItems, viewCopy, type ViewId } from "@/lib/nav"
 import {
   Bot,
@@ -90,8 +91,7 @@ async function doLogout() {
     method: "POST",
     headers: { Authorization: `Bearer ${token ?? ""}` },
   }).catch(() => {})
-  localStorage.removeItem("zv_token")
-  localStorage.removeItem("zv_user")
+  clearStoredAuth()
   window.location.href = "/login"
 }
 
@@ -228,6 +228,34 @@ export default function AppLayout() {
   const [agentsOpen, setAgentsOpen] = useState(false)
   const { count: unreadCount } = useUnreadCount()
   const location = useLocation()
+
+  useEffect(() => {
+    if (!auth) return
+
+    let cancelled = false
+
+    async function validateSession() {
+      try {
+        const response = await fetch("/api/auth/me")
+        if (!cancelled && response.status === 401) {
+          redirectToLogin("expired")
+        }
+      } catch {
+        // Falha de rede não deve deslogar o usuário; o interceptor trata 401 reais.
+      }
+    }
+
+    validateSession()
+
+    window.addEventListener("focus", validateSession)
+    document.addEventListener("visibilitychange", validateSession)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener("focus", validateSession)
+      document.removeEventListener("visibilitychange", validateSession)
+    }
+  }, [auth?.id])
 
   // Auth guard
   if (!auth) return <Navigate to="/login" replace />

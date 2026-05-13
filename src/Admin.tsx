@@ -39,6 +39,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetHeader, SheetContent } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
+import { clearStoredAuth, readStoredAuth, redirectToLogin } from "@/lib/auth"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -936,18 +937,13 @@ export default function Admin() {
   const [adminName, setAdminName]   = useState("Admin")
 
   useEffect(() => {
-    const storedToken = localStorage.getItem("zv_token")
-    const storedUser  = localStorage.getItem("zv_user")
-    if (!storedToken || !storedUser) { window.location.href = "/login"; return }
-    try {
-      const user = JSON.parse(storedUser)
-      if (user.type !== "admin") { window.location.href = "/"; return }
-      setToken(storedToken)
-      setAdminName(user.name ?? "Admin")
-      setAuthorized(true)
-    } catch {
-      window.location.href = "/login"
-    }
+    const storedAuth = readStoredAuth()
+    if (!storedAuth) { redirectToLogin("expired"); return }
+    if (storedAuth.user.type !== "admin") { window.location.href = "/atendimento"; return }
+
+    setToken(storedAuth.token)
+    setAdminName(storedAuth.user.name ?? "Admin")
+    setAuthorized(true)
   }, [])
 
   // ── Data ────────────────────────────────────────────────────────────────────
@@ -1059,7 +1055,7 @@ export default function Admin() {
               <Globe className="size-3.5" /> Voltar ao app
             </a>
             <button
-              onClick={() => { localStorage.removeItem("zv_token"); localStorage.removeItem("zv_user"); window.location.href = "/login" }}
+              onClick={() => { clearStoredAuth(); window.location.href = "/login" }}
               className="flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-zinc-100 hover:text-foreground"
             >
               <LogOut className="size-3.5" /> Sair

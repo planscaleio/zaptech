@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react"
+import { consumeSessionExpiredNotice, storeAuth } from "@/lib/auth"
 import { cn } from "@/lib/utils"
 
 // ─── Noise texture SVG (grain overlay) ───────────────────────────────────────
@@ -286,7 +287,12 @@ function RightPanel() {
   const [password, setPassword] = useState("")
   const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
+  const [error, setError] = useState(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("expired") === "1" || consumeSessionExpiredNotice()) return "Sua sessão expirou. Entre novamente para continuar."
+    if (params.get("invalid") === "1") return "Não foi possível validar sua sessão. Entre novamente."
+    return ""
+  })
   const [emailFocus, setEmailFocus] = useState(false)
   const [pwFocus, setPwFocus] = useState(false)
   const [mounted, setMounted] = useState(false)
@@ -316,9 +322,10 @@ function RightPanel() {
         setError(data.error ?? "Erro ao entrar. Tente novamente.")
         return
       }
-      localStorage.setItem("zv_token", data.token)
-      localStorage.setItem("zv_user", JSON.stringify(data.user))
-      window.location.href = data.user.type === "admin" ? "/admin" : "/"
+      storeAuth(data.token, data.user)
+      const next = new URLSearchParams(window.location.search).get("next")
+      const safeNext = next?.startsWith("/") && !next.startsWith("//") ? next : "/atendimento"
+      window.location.href = data.user.type === "admin" ? "/admin" : safeNext
     } catch {
       setError("Não foi possível conectar ao servidor.")
     } finally {

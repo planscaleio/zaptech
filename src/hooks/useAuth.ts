@@ -1,22 +1,19 @@
-import { useMemo } from "react"
-
-interface AuthUser {
-  id: string
-  name: string
-  email: string
-  role: string
-  type: "user" | "admin"
-  companyId?: string
-}
+import { useEffect, useState } from "react"
+import { listenAuthChanges, readStoredAuth, type AuthUser } from "@/lib/auth"
 
 export function useAuth(): AuthUser | null {
-  return useMemo(() => {
-    try {
-      const raw = localStorage.getItem("zv_user")
-      if (!raw) return null
-      return JSON.parse(raw) as AuthUser
-    } catch {
-      return null
+  const [auth, setAuth] = useState<AuthUser | null>(() => readStoredAuth()?.user ?? null)
+
+  useEffect(() => {
+    const refreshAuth = () => setAuth(readStoredAuth()?.user ?? null)
+    const stopListening = listenAuthChanges(refreshAuth)
+    const interval = window.setInterval(refreshAuth, 30_000)
+
+    return () => {
+      stopListening()
+      window.clearInterval(interval)
     }
   }, [])
+
+  return auth
 }

@@ -607,6 +607,33 @@ function channelLabel(channel: string): string {
   return map[channel] ?? channel
 }
 
+const brlFormatter = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" })
+
+function parseCurrencyValue(value: string | number | null | undefined): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null
+  if (!value) return null
+
+  const raw = String(value).trim()
+  if (!raw || raw === "—") return null
+
+  const numeric = raw.replace(/[^\d,.-]/g, "")
+  if (!numeric) return null
+
+  const normalized = numeric.includes(",")
+    ? numeric.replace(/\./g, "").replace(",", ".")
+    : /^\d{1,3}(\.\d{3})+$/.test(numeric)
+      ? numeric.replace(/\./g, "")
+      : numeric
+
+  const amount = Number(normalized)
+  return Number.isFinite(amount) ? amount : null
+}
+
+function formatCurrency(value: string | number | null | undefined, fallback = "—"): string {
+  const amount = parseCurrencyValue(value)
+  return amount === null ? fallback : brlFormatter.format(amount)
+}
+
 function initials(name: string): string {
   return name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase()
 }
@@ -632,8 +659,8 @@ function CustomerAvatar({ customer, className = "size-10" }: { customer: ConvSum
       {customer.avatarUrl ? (
         <AvatarImage src={customer.avatarUrl} alt={customer.name} />
       ) : (
-        <AvatarFallback className={cn("text-xs font-bold", avatarTone(customer.id || customer.name))}>
-          {initials(customer.name)}
+        <AvatarFallback className={cn("ring-1 ring-inset ring-black/5", avatarTone(customer.id || customer.name))}>
+          <UserRound className="size-4" />
         </AvatarFallback>
       )}
     </Avatar>
@@ -1329,7 +1356,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   }
 
   function formatMoney(value: string | number | null | undefined) {
-    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value ?? 0))
+    return formatCurrency(value, brlFormatter.format(0))
   }
 
   function openQuoteModal() {
@@ -1660,33 +1687,35 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                     <div
                       key={conv.id}
                       className={cn(
-                        "group relative flex w-full cursor-pointer gap-2 rounded-lg border border-transparent px-2 py-1.5 text-left transition-colors hover:bg-muted/45",
+                        "group relative w-full cursor-pointer rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors hover:bg-muted/45",
                         selectedConv && "border-primary/30 bg-primary/5",
                         conv.status === "PARA_EXCLUIR" && "border-red-200 bg-red-50/40",
                         conv.customer.isVip && !selectedConv && "bg-amber-50/25",
                       )}
                       onClick={() => loadDetail(conv.id)}
                     >
-                      <CustomerAvatar customer={conv.customer} className="size-9" />
-
-                      <div className="min-w-0 flex-1 border-b pb-1 group-last:border-b-0">
-                        <div className="flex items-center gap-2">
-                          <p className="min-w-0 flex-1 truncate text-xs font-semibold">{conv.customer.name}</p>
-                          <span className={cn("shrink-0 text-[10px]", selectedConv ? "font-semibold text-primary" : "text-muted-foreground")}>
-                            {formatRelativeTime(conv.lastMessageAt)}
-                          </span>
+                      <div className="min-w-0 border-b pb-1 group-last:border-b-0">
+                        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <p className="min-w-0 truncate text-xs font-semibold">{conv.customer.name}</p>
+                              {conv.customer.isVip && <Crown className="size-3 shrink-0 text-amber-500" />}
+                            </div>
+                            <div className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
+                              {isEmailView ? <Mail className="size-2.5 shrink-0" /> : <MessageCircle className="size-2.5 shrink-0" />}
+                              <span className="truncate">{contact}</span>
+                            </div>
+                          </div>
+                          {conv.leadValue && (
+                            <span className="shrink-0 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                              {formatCurrency(conv.leadValue)}
+                            </span>
+                          )}
                         </div>
 
-                        <div className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
-                          {isEmailView ? <Mail className="size-2.5 shrink-0" /> : <MessageCircle className="size-2.5 shrink-0" />}
-                          <span className="truncate">{contact}</span>
-                        </div>
-
-                        <div className="mt-0.5 flex items-center gap-2">
+                        <div className="mt-1 flex items-start gap-2">
                           <p className="min-w-0 flex-1 truncate text-[11px] leading-4 text-muted-foreground">{conv.preview ?? "—"}</p>
-                          {conv.customer.isVip && <Crown className="size-3 shrink-0 text-amber-500" />}
-                          {conv.aiReason && <Sparkles className="size-3 shrink-0 text-cyan-600" />}
-                          {conv.leadValue && <span className="shrink-0 text-[10px] font-semibold text-primary">{String(conv.leadValue)}</span>}
+                          {conv.aiReason && <Sparkles className="mt-0.5 size-3 shrink-0 text-cyan-600" />}
                         </div>
 
                         <div className="mt-1 flex items-center gap-1">
@@ -1702,6 +1731,9 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                             <span className="truncate rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">#{primaryTag.name}</span>
                           )}
                           {conv.tags.length > 1 && <span className="text-[9px] text-muted-foreground">+{conv.tags.length - 1}</span>}
+                          <span className={cn("ml-auto shrink-0 text-[10px]", selectedConv ? "font-semibold text-primary" : "text-muted-foreground")}>
+                            {formatRelativeTime(conv.lastMessageAt)}
+                          </span>
                         </div>
                       </div>
 
@@ -2020,8 +2052,8 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                   <div key={msg.id} className={cn("flex gap-3", msg.align === "right" && "justify-end")}>
                     {msg.align === "left" && (
                       <Avatar className="size-8">
-                        <AvatarFallback className={msg.isAiGenerated ? "bg-cyan-50 text-cyan-700" : ""}>
-                          {msg.isAiGenerated ? "IA" : initials(msg.authorName)}
+                        <AvatarFallback className={msg.isAiGenerated ? "bg-cyan-50 text-cyan-700" : "bg-slate-100 text-slate-600"}>
+                          {msg.isAiGenerated ? "IA" : <UserRound className="size-3.5" />}
                         </AvatarFallback>
                       </Avatar>
                     )}
@@ -3056,7 +3088,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
             </CardHeader>
             <CardContent className="space-y-2 p-3 pt-0">
               {[
-                ["Valor potencial", customer?.value ?? "—"],
+                ["Valor potencial", formatCurrency(customer?.value)],
                 ["Etapa", customer?.stage ?? "—"],
                 ["Origem", customer?.source ?? "—"],
                 ["Sentimento", customer?.aiSentiment ?? "—"],

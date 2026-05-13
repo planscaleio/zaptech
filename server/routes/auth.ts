@@ -8,8 +8,19 @@ const router = Router()
 const TTL = Number(process.env.AUTH_TOKEN_TTL_SECONDS ?? 604800)
 const SECRET = process.env.AUTH_SECRET!
 
+type AuthPayload = {
+  sub: string
+  type: "user" | "admin"
+  companyId?: string
+  role?: string
+}
+
 function getClientIp(req: Request): string {
   return (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ?? req.socket.remoteAddress ?? ""
+}
+
+function getBearerToken(req: Request): string {
+  return (req.headers.authorization ?? "").replace("Bearer ", "").trim()
 }
 
 router.post("/login", async (req: Request, res: Response) => {
@@ -121,11 +132,50 @@ router.post("/login", async (req: Request, res: Response) => {
 })
 
 router.post("/logout", async (req: Request, res: Response) => {
-  const token = (req.headers.authorization ?? "").replace("Bearer ", "").trim()
+  const token = getBearerToken(req)
   if (token) {
     await db.session.deleteMany({ where: { token } }).catch(() => {})
   }
   return res.json({ ok: true })
+})
+
+router.get("/me", async (req: Request, res: Response) => {
+  const token = getBearerToken(req)
+  if (!token) return res.status(401).json({ error: "Token ausente" })
+
+  try {
+    const payload = jwt.verify(token, SECRET) as AuthPayload
+    const session = await db.session.findUnique({
+      where: { token },
+      include: { user: true, adminUser: true },
+    })
+
+    if (!session || session.expiresAt.getTime() <= Date.now()) {
+      await db.session.deleteMany({ where: { token } }).catch(() => {})
+      return res.status(401).json({ error: "Sessão expirada" })
+    }
+
+    const actor = payload.type === "admin" ? session.adminUser : session.user
+    if (!actor || actor.id !== payload.sub) {
+      await db.session.deleteMany({ where: { token } }).catch(() => {})
+      return res.status(401).json({ error: "Sessão inválida" })
+    }
+
+    return res.json({
+      user: {
+        id: actor.id,
+        name: actor.name,
+        email: actor.email,
+        role: actor.role,
+        type: payload.type,
+        ...(payload.type === "user" && session.user ? { companyId: session.user.companyId } : {}),
+      },
+      expiresAt: session.expiresAt,
+    })
+  } catch {
+    await db.session.deleteMany({ where: { token } }).catch(() => {})
+    return res.status(401).json({ error: "Token inválido ou expirado" })
+  }
 })
 
 export default router

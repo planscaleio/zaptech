@@ -4,6 +4,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import "./index.css"
 
 import AppLayout from "@/layouts/AppLayout"
+import { installAuthFetchInterceptor } from "@/lib/auth"
 import Login from "./Login"
 import Admin from "./Admin"
 import LandingPage  from "@/pages/landing/LandingPage"
@@ -34,6 +35,8 @@ import RelatoriosPage   from "@/pages/RelatoriosPage"
 import ConfiguracoesPage from "@/pages/ConfiguracoesPage"
 import PipelinesPage from "@/pages/PipelinesPage"
 import ErrorPage from "@/pages/ErrorPage"
+
+installAuthFetchInterceptor()
 
 const router = createBrowserRouter([
   // Marketing / public routes
