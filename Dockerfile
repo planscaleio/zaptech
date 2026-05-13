@@ -35,5 +35,5 @@ ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000
 
-# On start: apply pending migrations, then boot the server
-CMD ["sh", "-c", "npx prisma migrate deploy && npx tsx server/index.ts"]
+# On start: apply pending migrations, seed baseline/demo data, then boot the server
+CMD ["sh", "-c", "npx prisma migrate deploy && npx prisma db seed && npx tsx server/index.ts"]
