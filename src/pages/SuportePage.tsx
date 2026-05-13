@@ -561,6 +561,23 @@ export default function SuportePage() {
                   <div className="border-b bg-muted/30 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Atividade
                   </div>
+                  {/* Add note */}
+                  <div className="border-b p-3">
+                    <textarea
+                      className="min-h-16 w-full resize-none rounded-md border bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-ring"
+                      placeholder="Adicionar nota interna..."
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                    />
+                    <Button
+                      size="sm"
+                      className="mt-2 h-7 text-xs"
+                      disabled={!note.trim() || addingNote}
+                      onClick={addNote}
+                    >
+                      {addingNote ? "Adicionando…" : "Adicionar nota"}
+                    </Button>
+                  </div>
                   <div className="divide-y">
                     {selected.activity.length === 0 && (
                       <p className="px-3 py-4 text-center text-xs text-muted-foreground">Nenhuma nota ainda.</p>
@@ -577,23 +594,6 @@ export default function SuportePage() {
                         </div>
                       </div>
                     ))}
-                  </div>
-                  {/* Add note */}
-                  <div className="border-t p-3">
-                    <textarea
-                      className="min-h-16 w-full resize-none rounded-md border bg-white px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-ring"
-                      placeholder="Adicionar nota interna..."
-                      value={note}
-                      onChange={(e) => setNote(e.target.value)}
-                    />
-                    <Button
-                      size="sm"
-                      className="mt-2 h-7 text-xs"
-                      disabled={!note.trim() || addingNote}
-                      onClick={addNote}
-                    >
-                      {addingNote ? "Adicionando…" : "Adicionar nota"}
-                    </Button>
                   </div>
                 </div>
               </div>
