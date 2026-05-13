@@ -1,6 +1,7 @@
 import "dotenv/config"
 import { PrismaClient } from "@prisma/client"
 import { PrismaPg } from "@prisma/adapter-pg"
+import { seedDemo } from "./seed-demo"
 
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! })
 const prisma = new PrismaClient({ adapter })
@@ -160,7 +161,9 @@ async function main() {
     console.log(`✓ Plan seeded: ${plan.name}`)
   }
 
-  console.log("✓ Planos seeded. Rode tsx prisma/seed-user.ts para criar os usuários de demo.")
+  await seedDemo(prisma)
+
+  console.log("✓ Planos e conta demo seeded.")
   console.log("\n🌱 Seed concluído.")
 }
 
