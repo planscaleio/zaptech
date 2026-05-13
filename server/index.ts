@@ -21,6 +21,7 @@ import businessAccountsRouter from "./routes/business-accounts.js"
 import auditoriasRouter from "./routes/auditorias.js"
 import settingsRouter from "./routes/settings.js"
 import agentsRouter from "./routes/agents.js"
+import adminRouter from "./routes/admin.js"
 import { Router } from "express"
 import { db } from "./db.js"
 import { startWorkers, runSegmentSync, runCardScore, runStageSync, runAiScore, runInboundProcessor, runOutboundSender, runOutboundRecovery, runAssignmentRecovery } from "./workers/index.js"
@@ -141,6 +142,7 @@ api.post("/workers/trigger", async (req: Request, res: Response) => {
 })
 
 app.use("/api", api)
+app.use("/api/admin", adminRouter)
 
 // ─── Static (production) ─────────────────────────────────────────────────────
 
