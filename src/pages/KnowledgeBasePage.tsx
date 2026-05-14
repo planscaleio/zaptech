@@ -3,6 +3,7 @@ import {
   Bold,
   BookOpenText,
   CheckCircle2,
+  ChevronRight,
   Copy,
   Heading2,
   Italic,
@@ -40,6 +41,114 @@ const statusTone: Record<KnowledgeStatus, "success" | "secondary" | "outline"> =
   PUBLICADO: "success",
   RASCUNHO: "secondary",
   ARQUIVADO: "outline",
+}
+
+type KnowledgeTreeNode = {
+  article: KnowledgeArticle
+  children: KnowledgeTreeNode[]
+}
+
+type KnowledgeTreeGroup = {
+  category: string
+  nodes: KnowledgeTreeNode[]
+  count: number
+}
+
+function buildKnowledgeTree(articles: KnowledgeArticle[]): KnowledgeTreeGroup[] {
+  const byId = new Map(articles.map((article) => [article.id, article]))
+  const childrenByParent = new Map<string, KnowledgeArticle[]>()
+  const rootsByCategory = new Map<string, KnowledgeArticle[]>()
+
+  for (const article of articles) {
+    if (article.parentId && byId.has(article.parentId)) {
+      const children = childrenByParent.get(article.parentId) ?? []
+      children.push(article)
+      childrenByParent.set(article.parentId, children)
+      continue
+    }
+
+    const category = article.category || "Geral"
+    const roots = rootsByCategory.get(category) ?? []
+    roots.push(article)
+    rootsByCategory.set(category, roots)
+  }
+
+  function sortArticles(items: KnowledgeArticle[]) {
+    return [...items].sort((a, b) => a.title.localeCompare(b.title, "pt-BR"))
+  }
+
+  function nodeFor(article: KnowledgeArticle): KnowledgeTreeNode {
+    return {
+      article,
+      children: sortArticles(childrenByParent.get(article.id) ?? []).map(nodeFor),
+    }
+  }
+
+  function countNodes(nodes: KnowledgeTreeNode[]): number {
+    return nodes.reduce((total, node) => total + 1 + countNodes(node.children), 0)
+  }
+
+  return Array.from(rootsByCategory.entries())
+    .sort(([a], [b]) => a.localeCompare(b, "pt-BR"))
+    .map(([category, roots]) => {
+      const nodes = sortArticles(roots).map(nodeFor)
+      return { category, nodes, count: countNodes(nodes) }
+    })
+}
+
+function KnowledgeNodeRow({
+  node,
+  depth,
+  selectedId,
+  onSelect,
+}: {
+  node: KnowledgeTreeNode
+  depth: number
+  selectedId: string
+  onSelect: (id: string) => void
+}) {
+  const [expanded, setExpanded] = useState(true)
+  const article = node.article
+  const hasChildren = node.children.length > 0
+
+  return (
+    <div>
+      <div
+        className={cn(
+          "group grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 border-b px-2 py-1.5 text-left transition-colors hover:bg-muted/45",
+          selectedId === article.id && "bg-primary/5",
+        )}
+        style={{ paddingLeft: `${8 + depth * 16}px` }}
+      >
+        <button
+          type="button"
+          className={cn(
+            "flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-white hover:text-foreground",
+            !hasChildren && "invisible",
+          )}
+          onClick={() => setExpanded((current) => !current)}
+          aria-label={expanded ? "Recolher" : "Expandir"}
+        >
+          <ChevronRight className={cn("size-3.5 transition-transform", expanded && "rotate-90")} />
+        </button>
+        <button type="button" className="min-w-0 text-left" onClick={() => onSelect(article.id)}>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-xs font-semibold">{article.title}</span>
+            {hasChildren && <span className="text-[10px] text-muted-foreground">{node.children.length}</span>}
+          </span>
+          <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+            {formatKnowledgeChannels(article.channels)}
+          </span>
+        </button>
+        <Badge variant={statusTone[article.status]} className="px-1.5 py-0 text-[9px]">
+          {knowledgeStatusLabel(article.status)}
+        </Badge>
+      </div>
+      {expanded && node.children.map((child) => (
+        <KnowledgeNodeRow key={child.article.id} node={child} depth={depth + 1} selectedId={selectedId} onSelect={onSelect} />
+      ))}
+    </div>
+  )
 }
 
 function RichHtmlEditor({
@@ -175,6 +284,12 @@ export default function KnowledgeBasePage() {
     })
   }, [articles, channelFilter, query, statusFilter])
 
+  const treeGroups = useMemo(() => buildKnowledgeTree(filtered), [filtered])
+  const statusFilterLabel = statusFilter === "ALL" ? "Todos status" : knowledgeStatusLabel(statusFilter)
+  const channelFilterLabel = channelFilter === "ALL"
+    ? "Todos canais"
+    : knowledgeChannels.find((item) => item.value === channelFilter)?.label ?? channelFilter
+
   function showSaved() {
     setSavedPulse(true)
     window.setTimeout(() => setSavedPulse(false), 1400)
@@ -288,40 +403,35 @@ export default function KnowledgeBasePage() {
               <Plus />
             </Button>
           </div>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {[
-              { value: "ALL", label: "Todos" },
-              { value: "PUBLICADO", label: "Publicados" },
-              { value: "RASCUNHO", label: "Rascunhos" },
-              { value: "ARQUIVADO", label: "Arquivados" },
-            ].map((item) => (
-              <button
-                key={item.value}
-                type="button"
-                onClick={() => setStatusFilter(item.value as KnowledgeStatus | "ALL")}
-                className={cn(
-                  "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted",
-                  statusFilter === item.value && "border-primary/30 bg-primary/10 text-primary",
-                )}
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <label className="grid gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Status
+              <select
+                className="h-8 rounded-md border bg-white px-2 text-xs normal-case tracking-normal text-foreground outline-none focus:ring-2 focus:ring-ring"
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as KnowledgeStatus | "ALL")}
               >
-                {item.label}
-              </button>
-            ))}
+                <option value="ALL">Todos status</option>
+                <option value="PUBLICADO">Publicados</option>
+                <option value="RASCUNHO">Rascunhos</option>
+                <option value="ARQUIVADO">Arquivados</option>
+              </select>
+            </label>
+            <label className="grid gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Canal
+              <select
+                className="h-8 rounded-md border bg-white px-2 text-xs normal-case tracking-normal text-foreground outline-none focus:ring-2 focus:ring-ring"
+                value={channelFilter}
+                onChange={(event) => setChannelFilter(event.target.value as KnowledgeChannel | "ALL")}
+              >
+                <option value="ALL">Todos canais</option>
+                {knowledgeChannels.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+            </label>
           </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {[{ value: "ALL", label: "Todos canais" }, ...knowledgeChannels].map((item) => (
-              <button
-                key={item.value}
-                type="button"
-                onClick={() => setChannelFilter(item.value as KnowledgeChannel | "ALL")}
-                className={cn(
-                  "rounded-full border px-2.5 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted",
-                  channelFilter === item.value && "border-sky-200 bg-sky-50 text-sky-700",
-                )}
-              >
-                {item.label}
-              </button>
-            ))}
+          <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
+            <span>{filtered.length} item{filtered.length !== 1 ? "s" : ""}</span>
+            <span className="truncate">{statusFilterLabel} · {channelFilterLabel}</span>
           </div>
         </div>
 
@@ -330,33 +440,19 @@ export default function KnowledgeBasePage() {
             <div className="flex h-full items-center justify-center">
               <Loader2 className="size-5 animate-spin text-muted-foreground" />
             </div>
-          ) : filtered.length === 0 ? (
+          ) : treeGroups.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted-foreground">Nenhum procedimento encontrado.</div>
           ) : (
-            filtered.map((article) => (
-              <button
-                key={article.id}
-                type="button"
-                onClick={() => setSelectedId(article.id)}
-                className={cn(
-                  "flex w-full gap-3 border-b px-3 py-3 text-left transition-colors hover:bg-muted/45",
-                  draft?.id === article.id && "bg-primary/5",
-                )}
-              >
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sky-50 text-sky-700 ring-1 ring-sky-100">
-                  <BookOpenText className="size-4" />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
-                    <span className="truncate text-sm font-semibold">{article.title}</span>
-                    <Badge variant={statusTone[article.status]}>{knowledgeStatusLabel(article.status)}</Badge>
-                  </span>
-                  <span className="mt-1 block truncate text-xs text-muted-foreground">
-                    {article.parent ? `${article.parent.title} / ` : ""}{article.category} · {formatKnowledgeChannels(article.channels)}
-                  </span>
-                  <span className="mt-1 line-clamp-2 text-xs leading-4 text-muted-foreground">{htmlToPlainText(article.content)}</span>
-                </span>
-              </button>
+            treeGroups.map((group) => (
+              <div key={group.category}>
+                <div className="sticky top-0 z-10 flex items-center justify-between border-b bg-muted/70 px-3 py-1.5 backdrop-blur">
+                  <span className="truncate text-[10px] font-bold uppercase tracking-wide text-muted-foreground">{group.category}</span>
+                  <span className="text-[10px] text-muted-foreground">{group.count}</span>
+                </div>
+                {group.nodes.map((node) => (
+                  <KnowledgeNodeRow key={node.article.id} node={node} depth={0} selectedId={draft?.id ?? selectedId} onSelect={setSelectedId} />
+                ))}
+              </div>
             ))
           )}
         </div>
@@ -412,15 +508,15 @@ export default function KnowledgeBasePage() {
                   <CardTitle className="text-sm">Conteúdo</CardTitle>
                 </CardHeader>
                 <CardContent className="grid gap-4">
-                  <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
-                    <label className="grid gap-1.5 text-xs font-medium">
+                  <div className="grid min-w-0 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(180px,220px)]">
+                    <label className="grid min-w-0 gap-1.5 text-xs font-medium">
                       Título
                       <Input value={draft.title} onChange={(event) => updateDraft({ title: event.target.value })} />
                     </label>
-                    <label className="grid gap-1.5 text-xs font-medium">
+                    <label className="grid min-w-0 gap-1.5 text-xs font-medium">
                       Procedimento pai
                       <select
-                        className="h-9 rounded-md border bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                        className="h-9 min-w-0 max-w-full rounded-md border bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
                         value={draft.parentId ?? ""}
                         onChange={(event) => updateDraft({ parentId: event.target.value || null })}
                       >

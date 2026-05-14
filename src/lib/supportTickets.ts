@@ -1,7 +1,9 @@
+import { sharedServiceCategories, type SharedServiceCategory } from "@/lib/categories"
+
 export type TicketStatus = "Novo" | "Triagem" | "Em atendimento" | "Aguardando cliente" | "Resolvido"
 export type TicketPriority = "Crítica" | "Alta" | "Média" | "Baixa"
 export type TicketSlaState = "Vencido" | "Em risco" | "No prazo"
-export type TicketCategory = "Financeiro" | "Técnico" | "Implantação" | "Comercial"
+export type TicketCategory = SharedServiceCategory
 
 export interface SupportTicket {
   id: string
@@ -29,7 +31,7 @@ const STORAGE_KEY = "zv_mock_support_tickets"
 const EVENT_NAME = "zv:support-ticket-created"
 
 export const supportTeams = ["Suporte N1", "Suporte Técnico", "Financeiro CS", "Implantação", "Comercial"] as const
-export const supportCategories: TicketCategory[] = ["Financeiro", "Técnico", "Implantação", "Comercial"]
+export const supportCategories = sharedServiceCategories
 export const supportPriorities: TicketPriority[] = ["Crítica", "Alta", "Média", "Baixa"]
 
 export const mockSupportTickets: SupportTicket[] = [

@@ -1,3 +1,5 @@
+import { sharedServiceCategories } from "@/lib/categories"
+
 export type KnowledgeStatus = "RASCUNHO" | "PUBLICADO" | "ARQUIVADO"
 export type KnowledgeChannel = "WHATSAPP" | "INSTAGRAM" | "SITE" | "EMAIL" | "TELEFONE" | "WEBHOOK"
 
@@ -48,15 +50,7 @@ export const knowledgeChannels: Array<{ value: KnowledgeChannel; label: string }
   { value: "WEBHOOK", label: "Webhook" },
 ]
 
-export const knowledgeCategories = [
-  "Geral",
-  "Atendimento",
-  "Suporte",
-  "Comercial",
-  "Financeiro",
-  "Implantação",
-  "Políticas",
-]
+export const knowledgeCategories = sharedServiceCategories
 
 export function knowledgeStatusLabel(status: KnowledgeStatus) {
   return knowledgeStatuses.find((item) => item.value === status)?.label ?? status
