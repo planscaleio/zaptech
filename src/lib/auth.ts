@@ -155,21 +155,13 @@ export function installAuthFetchInterceptor() {
     try {
       response = await nativeFetch(input, { ...init, headers })
     } catch {
-      if (token && !isAuthLogout) {
-        redirectToLogin("expired")
-      }
-
-      return new Response(JSON.stringify({ error: "Sessão indisponível" }), {
+      return new Response(JSON.stringify({ error: "Serviço indisponível" }), {
         status: 503,
         headers: { "Content-Type": "application/json" },
       })
     }
 
     if ((response.status === 401 || response.status === 419 || response.status === 440) && !isAuthLogout) {
-      redirectToLogin("expired")
-    }
-
-    if (token && response.status >= 500 && !isAuthLogout) {
       redirectToLogin("expired")
     }
 

@@ -11,6 +11,7 @@ import { db } from "../db.js"
 import { runWorker, type WorkerContext } from "./runner.js"
 import { jidToPhone, extractText, mediaPlaceholder, calcNextAttempt } from "../utils/evolution.js"
 import { resolveAttendant, assignConversation } from "../lib/distributionEngine.js"
+import { attachmentKindFromMime, saveRemoteAttachment } from "../lib/media-storage.js"
 
 const BATCH_SIZE   = 50
 const MAX_ATTEMPTS = 5
@@ -23,6 +24,42 @@ interface EvoMessage {
   messageType?: string
   pushName?: string
   messageTimestamp?: number
+}
+
+function mediaNodeForType(message: Record<string, unknown> | undefined, messageType: string) {
+  if (!message) return null
+  const node = message[messageType]
+  return node && typeof node === "object" ? node as Record<string, unknown> : null
+}
+
+function extractMediaAttachment(msg: EvoMessage, msgType: string) {
+  const supported = new Set(["imageMessage", "audioMessage", "documentMessage", "videoMessage"])
+  if (!supported.has(msgType)) return null
+
+  const media = mediaNodeForType(msg.message, msgType)
+  if (!media) return null
+
+  const mimeType = typeof media.mimetype === "string"
+    ? media.mimetype
+    : msgType === "audioMessage"
+    ? "audio/ogg"
+    : "application/octet-stream"
+  const remoteUrl = typeof media.url === "string" ? media.url : null
+  const fileName =
+    (typeof media.fileName === "string" && media.fileName) ||
+    (typeof media.title === "string" && media.title) ||
+    `${msgType.replace("Message", "")}-${msg.key?.id ?? Date.now()}`
+  const rawSize = media.fileLength
+  const size = typeof rawSize === "number" ? rawSize : typeof rawSize === "string" ? Number(rawSize) : null
+
+  return {
+    type: attachmentKindFromMime(mimeType),
+    fileName,
+    mimeType,
+    size: Number.isFinite(size) ? Number(size) : null,
+    remoteUrl,
+    metadata: media,
+  }
 }
 
 async function processInbound(inbound: {
@@ -43,7 +80,7 @@ async function processInbound(inbound: {
   const rawText = extractText(msg.message)
   const text    = rawText || (TEXT_TYPES.has(msgType) ? "" : mediaPlaceholder(msgType))
 
-  const { convId, isNew } = await db.$transaction(async (tx) => {
+  const { convId, messageId, isNew } = await db.$transaction(async (tx) => {
     // 1. Upsert Customer
     const existing = await tx.customer.findFirst({
       where: { companyId: inbound.companyId, phone: inbound.senderPhone },
@@ -94,7 +131,7 @@ async function processInbound(inbound: {
         })
 
     // 3. Create Message
-    await tx.message.create({
+    const message = await tx.message.create({
       data: {
         conversationId: conversation.id,
         authorName: pushName || inbound.senderPhone,
@@ -104,10 +141,60 @@ async function processInbound(inbound: {
         align: "left",
         createdAt: timestamp,
       },
+      select: { id: true },
     })
 
-    return { convId: conversation.id, isNew: !existingConv }
+    return { convId: conversation.id, messageId: message.id, isNew: !existingConv }
   })
+
+  const mediaAttachment = extractMediaAttachment(msg, msgType)
+  if (mediaAttachment) {
+    try {
+      const saved = mediaAttachment.remoteUrl
+        ? await saveRemoteAttachment({
+            companyId: inbound.companyId,
+            conversationId: convId,
+            fileName: mediaAttachment.fileName,
+            mimeType: mediaAttachment.mimeType,
+            remoteUrl: mediaAttachment.remoteUrl,
+          })
+        : null
+
+      await db.messageAttachment.create({
+        data: {
+          companyId: inbound.companyId,
+          conversationId: convId,
+          messageId,
+          type: saved?.type ?? mediaAttachment.type,
+          fileName: saved?.fileName ?? mediaAttachment.fileName,
+          mimeType: saved?.mimeType ?? mediaAttachment.mimeType,
+          size: saved?.size ?? mediaAttachment.size,
+          storagePath: saved?.storagePath ?? null,
+          url: saved?.url ?? mediaAttachment.remoteUrl ?? "",
+          source: "WHATSAPP_INBOUND",
+          externalUrl: mediaAttachment.remoteUrl,
+          metadata: mediaAttachment.metadata,
+        },
+      })
+    } catch (err) {
+      console.warn("[inbound-processor] Falha ao salvar mídia localmente:", err)
+      await db.messageAttachment.create({
+        data: {
+          companyId: inbound.companyId,
+          conversationId: convId,
+          messageId,
+          type: mediaAttachment.type,
+          fileName: mediaAttachment.fileName,
+          mimeType: mediaAttachment.mimeType,
+          size: mediaAttachment.size,
+          url: mediaAttachment.remoteUrl ?? "",
+          source: "WHATSAPP_INBOUND",
+          externalUrl: mediaAttachment.remoteUrl,
+          metadata: mediaAttachment.metadata,
+        },
+      })
+    }
+  }
 
   // 4. Auto-assign via distribution rules (only for new conversations without an attendant)
   if (isNew) {

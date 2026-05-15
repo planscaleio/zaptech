@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from "react"
+import { useCallback, useMemo, useState, useEffect, useRef } from "react"
 import { useAuth } from "@/hooks/useAuth"
 import {
   DndContext,
@@ -29,11 +29,13 @@ import {
   ClipboardList,
   Crown,
   DollarSign,
+  Download,
   CircleDot,
   Clock3,
   Command,
   FileText,
   GitBranch,
+  ImageIcon,
   Inbox,
   Kanban,
   Languages,
@@ -47,6 +49,7 @@ import {
   MessageCircle,
   MoreHorizontal,
   PanelLeft,
+  Paperclip,
   Phone,
   Plus,
   PlayCircle,
@@ -64,6 +67,7 @@ import {
   UserRound,
   Users,
   Trash2,
+  Volume2,
   Wand2,
   Workflow,
   X,
@@ -557,12 +561,38 @@ interface ConvSummary {
 }
 
 interface ConvDetail extends ConvSummary {
-  messages: { id: string; authorName: string; role: string; text: string; align: string; isAiGenerated: boolean; createdAt: string; pending?: boolean }[]
+  messages: {
+    id: string
+    authorName: string
+    role: string
+    text: string
+    align: string
+    isAiGenerated: boolean
+    createdAt: string
+    pending?: boolean
+    attachments?: MessageAttachment[]
+  }[]
   customer: ConvSummary["customer"] & {
     email: string | null; stage: string | null; source: string | null; value: string | null
     aiSentiment: string | null; aiRisk: string | null; aiNextBestAction: string | null
     aiFindings: { id: string; text: string }[]
   }
+}
+
+type MessageAttachment = {
+  id: string
+  type: "IMAGE" | "AUDIO" | "DOCUMENT" | "VIDEO"
+  fileName: string
+  mimeType: string
+  size: number | null
+  url: string
+  externalUrl?: string | null
+}
+
+type PendingAttachment = {
+  id: string
+  file: File
+  previewUrl: string
 }
 
 function formatRelativeTime(iso: string | null): string {
@@ -574,6 +604,22 @@ function formatRelativeTime(iso: string | null): string {
   const hrs = Math.floor(mins / 60)
   if (hrs < 24) return `${hrs}h`
   return `${Math.floor(hrs / 24)}d`
+}
+
+function formatFileSize(size: number | null | undefined): string {
+  if (!size) return "—"
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function fileToBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? "").replace(/^data:[^;]+;base64,/, ""))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
 }
 
 function statusToVariant(status: string): "warning" | "success" | "secondary" | "outline" {
@@ -667,6 +713,61 @@ function CustomerAvatar({ customer, className = "size-10" }: { customer: ConvSum
   )
 }
 
+function MessageAttachments({ attachments, outgoing }: { attachments?: MessageAttachment[]; outgoing?: boolean }) {
+  if (!attachments || attachments.length === 0) return null
+
+  return (
+    <div className="mt-2 space-y-2">
+      {attachments.map((attachment) => {
+        const href = attachment.url || attachment.externalUrl || "#"
+        if (attachment.type === "IMAGE") {
+          return (
+            <a key={attachment.id} href={href} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-md border bg-white/70">
+              <img src={href} alt={attachment.fileName} className="max-h-72 w-full object-contain" />
+              <span className={cn("flex items-center gap-1.5 px-2 py-1.5 text-xs", outgoing ? "text-primary-foreground/85" : "text-muted-foreground")}>
+                <ImageIcon className="size-3.5" />
+                {attachment.fileName}
+              </span>
+            </a>
+          )
+        }
+        if (attachment.type === "AUDIO") {
+          return (
+            <div key={attachment.id} className="rounded-md border bg-white/70 p-2">
+              <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Volume2 className="size-3.5" />
+                {attachment.fileName}
+              </div>
+              <audio controls src={href} className="h-9 w-full" />
+            </div>
+          )
+        }
+        return (
+          <a
+            key={attachment.id}
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(
+              "flex items-center gap-2 rounded-md border bg-white/70 p-2 text-sm transition-colors hover:bg-white",
+              outgoing ? "text-slate-900" : "text-foreground",
+            )}
+          >
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+              <FileText className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{attachment.fileName}</span>
+              <span className="text-xs text-muted-foreground">{formatFileSize(attachment.size)}</span>
+            </span>
+            <Download className="size-4 shrink-0 text-muted-foreground" />
+          </a>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── SupportView ─────────────────────────────────────────────────────────────
 
 export function SupportView({ mode = "support" }: { mode?: "support" | "emails" }) {
@@ -684,7 +785,11 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState("")
   const selectedIdRef = useRef<string | null>(null)
+  const selectedRef = useRef<ConvDetail | null>(null)
   const replyTextareaRef = useRef<HTMLTextAreaElement>(null)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
+  const pendingAttachmentsRef = useRef<PendingAttachment[]>([])
   const [rops, setRops] = useState<Rop[]>(() => loadRops())
   const [ropsOpen, setRopsOpen] = useState(false)
   const [ropSearch, setRopSearch] = useState("")
@@ -729,6 +834,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   type TagSuggestion = { name: string; reason: string; isNew: boolean; existingId: string | null; color: string }
   const [tagSuggestions, setTagSuggestions] = useState<TagSuggestion[]>([])
   const [tagLoading, setTagLoading] = useState(false)
+  const [tagError, setTagError] = useState("")
 
   // Tags currently applied on the selected conversation (derived + writable)
   const appliedTagNames = useMemo(
@@ -813,34 +919,116 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   const [quoteError, setQuoteError] = useState("")
   const [quoteSuccess, setQuoteSuccess] = useState("")
 
-  function conversationListUrl() {
+  useEffect(() => {
+    selectedRef.current = selected
+  }, [selected])
+
+  useEffect(() => {
+    pendingAttachmentsRef.current = pendingAttachments
+  }, [pendingAttachments])
+
+  useEffect(() => {
+    return () => {
+      pendingAttachmentsRef.current.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl))
+    }
+  }, [])
+
+  const conversationListUrl = useCallback(() => {
     const params = new URLSearchParams({ companyId: companyId ?? "" })
     if (isEmailView) params.set("channel", "EMAIL")
     return `/api/conversations?${params.toString()}`
-  }
+  }, [companyId, isEmailView])
 
-  function scopeConversations(data: ConvSummary[]) {
+  const scopeConversations = useCallback((data: ConvSummary[]) => {
     return isEmailView ? data : data.filter((conversation) => conversation.channel !== "EMAIL")
-  }
+  }, [isEmailView])
+
+  const refreshActiveConversation = useCallback((targetId?: string | null) => {
+    const id = targetId ?? selectedIdRef.current
+    if (!id) return Promise.resolve()
+
+    return fetch(`/api/conversations/${id}/messages`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data: ConvDetail | null) => {
+        if (!data || selectedIdRef.current !== id) return
+        setSelected((prev) => {
+          if (!prev) return data
+          const pending = prev.messages.filter(
+            (m) => m.pending && !data.messages.some((dm) => dm.text === m.text && dm.role === m.role)
+          )
+          const merged = pending.length > 0
+            ? { ...data, messages: [...data.messages, ...pending] }
+            : data
+          if (
+            merged.messages.length === prev.messages.length &&
+            merged.lastMessageAt === prev.lastMessageAt &&
+            merged.preview === prev.preview &&
+            merged.status === prev.status &&
+            merged.messages.every((m, i) => m.id === prev.messages[i]?.id)
+          ) {
+            return prev
+          }
+          return merged
+        })
+        setConvList((prev) => prev.map((c) =>
+          c.id === id ? { ...c, preview: data.preview, lastMessageAt: data.lastMessageAt, status: data.status } : c
+        ))
+      })
+      .catch(() => {})
+  }, [])
+
+  const refreshConversationList = useCallback((options: { selectFirst?: boolean } = {}) => {
+    if (!companyId) return Promise.resolve()
+
+    return fetch(conversationListUrl())
+      .then((r) => r.ok ? r.json() : null)
+      .then((data: ConvSummary[] | null) => {
+        if (!data) return
+        const scoped = scopeConversations(data)
+        const openId = selectedIdRef.current
+        const openedSummary = openId ? scoped.find((conversation) => conversation.id === openId) : null
+        const currentSelected = selectedRef.current
+
+        setConvList((prev) => {
+          if (
+            scoped.length === prev.length &&
+            scoped.every((d, i) =>
+              d.id === prev[i]?.id &&
+              d.lastMessageAt === prev[i]?.lastMessageAt &&
+              d.preview === prev[i]?.preview &&
+              d.status === prev[i]?.status
+            )
+          ) {
+            return prev
+          }
+          return scoped
+        })
+
+        if (openedSummary && currentSelected?.id === openedSummary.id && openedSummary.lastMessageAt !== currentSelected.lastMessageAt) {
+          void refreshActiveConversation(openedSummary.id)
+        }
+
+        if (options.selectFirst && !selectedIdRef.current) {
+          if (scoped.length > 0) loadDetail(scoped[0].id)
+          else {
+            setSelected(null)
+            setSelectedId(null)
+            selectedIdRef.current = null
+          }
+        }
+      })
+      .catch(() => {})
+  }, [companyId, conversationListUrl, refreshActiveConversation, scopeConversations])
 
   useEffect(() => {
     if (!companyId) return
     setLoadingList(true)
-    fetch(conversationListUrl())
-      .then((r) => r.json())
-      .then((data: ConvSummary[]) => {
-        const scoped = scopeConversations(data)
-        setConvList(scoped)
-        if (scoped.length > 0) loadDetail(scoped[0].id)
-        else {
-          setSelected(null)
-          setSelectedId(null)
-          selectedIdRef.current = null
-        }
-      })
-      .catch(console.error)
+    selectedIdRef.current = null
+    setSelectedId(null)
+    setSelected(null)
+    refreshConversationList({ selectFirst: true })
       .finally(() => setLoadingList(false))
-  }, [companyId])
+  }, [companyId, isEmailView, refreshConversationList])
 
   useEffect(() => {
     if (!companyId) return
@@ -886,59 +1074,37 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [selected?.messages])
 
-  // Poll conversation list every 15s so new conversations appear automatically
+  // Poll conversation list so new inbound WhatsApp/e-mail conversations appear automatically.
   useEffect(() => {
     if (!companyId) return
     const poll = setInterval(() => {
-      fetch(conversationListUrl())
-        .then((r) => r.ok ? r.json() : null)
-        .then((data: ConvSummary[] | null) => {
-          if (!data) return
-          const scoped = scopeConversations(data)
-          setConvList((prev) => {
-            if (scoped.length === prev.length &&
-                scoped.every((d, i) => d.id === prev[i]?.id && d.lastMessageAt === prev[i]?.lastMessageAt))
-              return prev
-            return scoped
-          })
-        })
-        .catch(() => {})
-    }, 15_000)
-    return () => clearInterval(poll)
-  }, [companyId])
+      void refreshConversationList()
+    }, 5_000)
 
-  // Poll for new messages on the active conversation every 3s
+    function refreshWhenVisible() {
+      if (document.visibilityState === "visible") {
+        void refreshConversationList()
+        void refreshActiveConversation()
+      }
+    }
+
+    window.addEventListener("focus", refreshWhenVisible)
+    document.addEventListener("visibilitychange", refreshWhenVisible)
+
+    return () => {
+      clearInterval(poll)
+      window.removeEventListener("focus", refreshWhenVisible)
+      document.removeEventListener("visibilitychange", refreshWhenVisible)
+    }
+  }, [companyId, refreshActiveConversation, refreshConversationList])
+
+  // Poll for new messages on the active conversation.
   useEffect(() => {
     const poll = setInterval(() => {
-      const id = selectedIdRef.current
-      if (!id) return
-      fetch(`/api/conversations/${id}/messages`)
-        .then((r) => r.ok ? r.json() : null)
-        .then((data: ConvDetail | null) => {
-          if (!data || selectedIdRef.current !== id) return
-          setSelected((prev) => {
-            if (!prev) return data
-            // Preserve pending (optimistic) messages not yet confirmed in the DB
-            const pending = prev.messages.filter(
-              (m) => m.pending && !data.messages.some((dm) => dm.text === m.text && dm.role === m.role)
-            )
-            const merged = pending.length > 0
-              ? { ...data, messages: [...data.messages, ...pending] }
-              : data
-            // Skip re-render if nothing actually changed
-            if (merged.messages.length === prev.messages.length &&
-                merged.messages.every((m, i) => m.id === prev.messages[i]?.id)) return prev
-            return merged
-          })
-          // Refresh conversation list preview/lastMessageAt
-          setConvList((prev) => prev.map((c) =>
-            c.id === id ? { ...c, preview: data.preview, lastMessageAt: data.lastMessageAt } : c
-          ))
-        })
-        .catch(() => {})
-    }, 3000)
+      void refreshActiveConversation()
+    }, 2_000)
     return () => clearInterval(poll)
-  }, [])
+  }, [refreshActiveConversation])
 
   function loadDetail(id: string) {
     setSelectedId(id)
@@ -946,6 +1112,8 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
     setSelected(null)
     setLoadingDetail(true)
     setSendError("")
+    pendingAttachments.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl))
+    setPendingAttachments([])
     fetch(`/api/conversations/${id}/messages`)
       .then((r) => r.json())
       .then((data: ConvDetail) => setSelected(data))
@@ -957,19 +1125,58 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
       .catch(() => {})
   }
 
+  function handleAttachmentFiles(files: File[]) {
+    setSendError("")
+    const allowed = files.filter((file) => {
+      const isAllowed =
+        file.type.startsWith("image/") ||
+        file.type === "application/pdf" ||
+        file.type === "text/plain" ||
+        file.type.includes("word") ||
+        file.type.includes("excel") ||
+        file.type.includes("spreadsheet")
+      if (!isAllowed) setSendError("Envie imagens, PDF ou documentos comuns.")
+      if (file.size > 10 * 1024 * 1024) setSendError("Cada arquivo deve ter no máximo 10MB.")
+      return isAllowed && file.size <= 10 * 1024 * 1024
+    })
+    if (allowed.length === 0) return
+
+    setPendingAttachments((prev) => {
+      const room = Math.max(0, 5 - prev.length)
+      return [
+        ...prev,
+        ...allowed.slice(0, room).map((file) => ({
+          id: `${file.name}-${file.lastModified}-${crypto.randomUUID()}`,
+          file,
+          previewUrl: URL.createObjectURL(file),
+        })),
+      ]
+    })
+  }
+
+  function removePendingAttachment(id: string) {
+    setPendingAttachments((prev) => {
+      const removed = prev.find((attachment) => attachment.id === id)
+      if (removed) URL.revokeObjectURL(removed.previewUrl)
+      return prev.filter((attachment) => attachment.id !== id)
+    })
+  }
+
   async function sendReply() {
-    if (!reply.trim() || !selected || sending) return
+    if ((!reply.trim() && pendingAttachments.length === 0) || !selected || sending) return
     setSending(true)
     setSendError("")
     const text = reply.trim()
+    const attachmentsToSend = pendingAttachments
     setReply("")
+    setPendingAttachments([])
 
     // Optimistic message so the user sees it immediately
     const optimisticMsg = {
       id: `optimistic-${Date.now()}`,
       authorName: auth?.name ?? "Atendente",
       role: "ATENDENTE" as const,
-      text,
+      text: text || attachmentsToSend.map((attachment) => attachment.file.name).join(", "),
       align: "right" as const,
       isAiGenerated: false,
       createdAt: new Date().toISOString(),
@@ -978,10 +1185,28 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
     setSelected((prev) => prev ? { ...prev, messages: [...prev.messages, optimisticMsg] } : prev)
 
     try {
+      let attachmentIds: string[] = []
+      if (attachmentsToSend.length > 0) {
+        const uploadPayload = await Promise.all(attachmentsToSend.map(async (attachment) => ({
+          fileName: attachment.file.name,
+          mimeType: attachment.file.type || "application/octet-stream",
+          base64: await fileToBase64(attachment.file),
+        })))
+
+        const uploadRes = await fetch(`/api/conversations/${selected.id}/attachments`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ files: uploadPayload }),
+        })
+        const uploadData = await uploadRes.json().catch(() => ({}))
+        if (!uploadRes.ok) throw new Error(uploadData.error ?? "Erro ao enviar anexo.")
+        attachmentIds = (uploadData.attachments ?? []).map((attachment: { id: string }) => attachment.id)
+      }
+
       const res = await fetch(`/api/conversations/${selected.id}/reply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, authorName: auth?.name ?? "Atendente" }),
+        body: JSON.stringify({ text, attachmentIds, authorName: auth?.name ?? "Atendente" }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -991,8 +1216,10 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
           ? { ...prev, messages: prev.messages.filter((m) => m.id !== optimisticMsg.id) }
           : prev)
         setReply(text)
+        setPendingAttachments(attachmentsToSend)
         return
       }
+      attachmentsToSend.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl))
       if (data.local && data.message) {
         const convId = selected.id
         setSelected((prev) => prev ? {
@@ -1038,12 +1265,13 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
           .catch(() => {})
         void optimisticId // reference to avoid lint warning
       }, 8000)
-    } catch {
-      setSendError("Não foi possível conectar ao servidor.")
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Não foi possível conectar ao servidor.")
       setSelected((prev) => prev
         ? { ...prev, messages: prev.messages.filter((m) => m.id !== optimisticMsg.id) }
         : prev)
       setReply(text)
+      setPendingAttachments(attachmentsToSend)
     } finally {
       setSending(false)
     }
@@ -1102,6 +1330,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
     if (!selected) return
     setActiveTool("tag")
     setTagSuggestions([])
+    setTagError("")
     setTagLoading(true)
     setAiToolOpen(true)
     setAiDropdownOpen(false)
@@ -1110,9 +1339,16 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversationId: selected.id }),
     })
-      .then((r) => r.json())
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(d.error ?? "Não foi possível gerar sugestões agora.")
+        return d
+      })
       .then((d) => setTagSuggestions(d.suggestions ?? []))
-      .catch(() => setTagSuggestions([]))
+      .catch((err) => {
+        setTagSuggestions([])
+        setTagError(err instanceof Error ? err.message : "Erro ao conectar com a IA.")
+      })
       .finally(() => setTagLoading(false))
   }
 
@@ -1454,14 +1690,22 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   function runAiTool() {
     if (!selected || !activeTool || activeTool === "tag") return
     setAiPhase("loading")
+    setAiResult("")
     fetch("/api/ai/tool", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversationId: selected.id, tool: activeTool, instruction: aiInstruction.trim() }),
     })
-      .then((r) => r.json())
-      .then((d) => { setAiResult(d.result ?? d.error ?? "Sem resposta."); loadAiHistory(selected.id) })
-      .catch(() => setAiResult("Erro ao conectar com a IA."))
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(d.error ?? "Não foi possível processar com a IA agora.")
+        return d
+      })
+      .then((d) => {
+        setAiResult(d.result ?? "Sem resposta.")
+        loadAiHistory(selected.id)
+      })
+      .catch((err) => setAiResult(err instanceof Error ? err.message : "Erro ao conectar com a IA."))
       .finally(() => setAiPhase("result"))
   }
 
@@ -2079,7 +2323,8 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                           )}
                         </span>
                       </div>
-                      <p className="text-sm leading-5">{msg.text}</p>
+                      {msg.text && <p className="text-sm leading-5">{msg.text}</p>}
+                      <MessageAttachments attachments={msg.attachments} outgoing={msg.align === "right"} />
                     </div>
                   </div>
                 ))}
@@ -2255,7 +2500,60 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                   {sendError && (
                     <p className="mb-2 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-[12px] text-red-600">{sendError}</p>
                   )}
+                  {pendingAttachments.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-2">
+                      {pendingAttachments.map((attachment) => {
+                        const isImage = attachment.file.type.startsWith("image/")
+                        return (
+                          <div key={attachment.id} className="flex max-w-64 items-center gap-2 rounded-md border bg-white p-1.5 pr-2 text-xs">
+                            {isImage ? (
+                              <img src={attachment.previewUrl} alt={attachment.file.name} className="size-9 rounded object-cover" />
+                            ) : (
+                              <span className="flex size-9 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
+                                <FileText className="size-4" />
+                              </span>
+                            )}
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-medium">{attachment.file.name}</span>
+                              <span className="text-[11px] text-muted-foreground">{formatFileSize(attachment.file.size)}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removePendingAttachment(attachment.id)}
+                              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                              aria-label="Remover anexo"
+                            >
+                              <X className="size-3.5" />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                   <div className="flex items-end gap-2">
+                    <input
+                      ref={attachmentInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+                      onChange={(event) => {
+                        handleAttachmentFiles(Array.from(event.target.files ?? []))
+                        event.target.value = ""
+                      }}
+                    />
+                    {!isEmailView && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="Anexar arquivo"
+                        onClick={() => attachmentInputRef.current?.click()}
+                        disabled={!selected || sending || pendingAttachments.length >= 5}
+                      >
+                        <Paperclip className="size-4" />
+                      </Button>
+                    )}
                     <textarea
                       ref={replyTextareaRef}
                       className={cn(
@@ -2272,7 +2570,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                       size="icon"
                       aria-label="Enviar resposta"
                       onClick={sendReply}
-                      disabled={!reply.trim() || sending}
+                      disabled={(!reply.trim() && pendingAttachments.length === 0) || sending}
                     >
                       {sending ? (
                         <svg className="animate-spin size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -2346,6 +2644,8 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                       <div key={i} className="h-14 animate-pulse rounded-xl border bg-muted/30" />
                     ))}
                   </div>
+                ) : tagError ? (
+                  <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{tagError}</p>
                 ) : tagSuggestions.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Nenhuma sugestão disponível.</p>
                 ) : (

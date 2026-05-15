@@ -15,6 +15,16 @@ const TOOL_LABELS: Record<ToolId, string> = {
   followup:    "Automação de follow-up",
 }
 
+const AI_UNAVAILABLE_RESPONSE = {
+  code: "AI_UNAVAILABLE",
+  error: "IA indisponível no momento. Tente novamente em instantes.",
+}
+
+function sendAiUnavailable(res: Response, err: unknown) {
+  console.error("[ai] Ollama error:", err)
+  return res.status(503).json(AI_UNAVAILABLE_RESPONSE)
+}
+
 // ─── Tag suggestion ────────────────────────────────────────────────────────────
 
 // POST /ai/suggest-tags  { conversationId }
@@ -57,7 +67,7 @@ router.post("/suggest-tags", async (req: Request, res: Response) => {
 
   const prompt = `Você é um analista de CRM especializado em vendas B2B. Sua tarefa é classificar esta conversa com tags estratégicas para segmentação e acompanhamento comercial.${existingList}
 
-Cliente: ${conversation.customer.name}
+Cliente: ${conversation.customer?.name ?? "Cliente sem nome"}
 Transcrição da conversa:
 ${transcript}
 
@@ -74,7 +84,12 @@ Responda APENAS com JSON válido, sem markdown. Sugira entre 2 e 4 tags — meno
 
 {"tags": [{"name": "nome-em-kebab-case-sem-acentos", "reason": "por que esta tag classifica este lead (1 frase)", "isNew": true_ou_false}]}`
 
-  const raw = await callOllama(prompt)
+  let raw: string
+  try {
+    raw = await callOllama(prompt)
+  } catch (err) {
+    return sendAiUnavailable(res, err)
+  }
 
   // Extrai JSON mesmo se vier com texto ao redor
   const jsonMatch = raw.match(/\{[\s\S]*\}/)
@@ -227,12 +242,17 @@ router.post("/tool", async (req: Request, res: Response) => {
     .map((m) => `[${m.role}] ${m.authorName}: ${m.text}`)
     .join("\n")
 
-  let prompt = buildPrompt(tool as ToolId, conversation.customer.name, transcript)
+  let prompt = buildPrompt(tool as ToolId, conversation.customer?.name ?? "Cliente sem nome", transcript)
   if (instruction?.trim()) {
     prompt += `\n\nInstrução adicional do vendedor: ${instruction.trim()}`
   }
 
-  const result = await callOllama(prompt)
+  let result: string
+  try {
+    result = await callOllama(prompt)
+  } catch (err) {
+    return sendAiUnavailable(res, err)
+  }
 
   const conv = await db.conversation.findUnique({ where: { id: conversationId }, select: { companyId: true } })
 
@@ -320,11 +340,11 @@ VARIACAO_B: [texto da mensagem]${n >= 3 ? "\nVARIACAO_C: [texto da mensagem]" : 
     const b = extract("VARIACAO_B"); if (b) variations.push(b)
     const c = extract("VARIACAO_C"); if (c && n >= 3) variations.push(c)
 
-    if (variations.length === 0) return res.status(500).json({ error: "IA não retornou variações válidas" })
+    if (variations.length === 0) return res.status(502).json({ code: "AI_INVALID_RESPONSE", error: "IA não retornou variações válidas" })
 
     return res.json({ variations })
   } catch (err) {
-    return res.status(500).json({ error: err instanceof Error ? err.message : "Erro ao chamar IA" })
+    return sendAiUnavailable(res, err)
   }
 })
 

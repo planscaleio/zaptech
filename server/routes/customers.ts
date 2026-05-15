@@ -361,7 +361,10 @@ Retorne APENAS um JSON válido neste formato exato:
     })
     return res.json(updated)
   } catch {
-    return res.status(502).json({ error: "Não foi possível analisar. Verifique se o Ollama está ativo." })
+    return res.status(503).json({
+      code: "AI_UNAVAILABLE",
+      error: "IA indisponível no momento. Tente novamente em instantes.",
+    })
   }
 })
 

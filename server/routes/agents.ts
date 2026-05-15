@@ -213,7 +213,10 @@ router.post("/:id/test", async (req: Request, res: Response) => {
     return res.json({ content })
   } catch (err) {
     console.error("[agents/test] Ollama error:", err)
-    return res.status(502).json({ error: "Falha ao chamar o modelo de IA", detail: String(err) })
+    return res.status(503).json({
+      code: "AI_UNAVAILABLE",
+      error: "IA indisponível no momento. Tente novamente em instantes.",
+    })
   }
 })
 

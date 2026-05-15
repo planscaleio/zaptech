@@ -10,6 +10,8 @@
 import { db } from "../db.js"
 import { runWorker, type WorkerContext } from "./runner.js"
 import { calcNextAttempt } from "../utils/evolution.js"
+import { absoluteUploadPath, mediaTypeForEvolution, type AttachmentKind } from "../lib/media-storage.js"
+import fs from "node:fs/promises"
 
 const BATCH_SIZE = 20
 
@@ -30,6 +32,53 @@ async function sendViaEvolution(instanceId: string, recipientPhone: string, body
 
   const json = await res.json() as { key?: { id?: string } }
   return json.key?.id ?? ""
+}
+
+async function sendMediaViaEvolution(
+  instanceId: string,
+  recipientPhone: string,
+  opts: {
+    body?: string | null
+    type: AttachmentKind
+    fileName: string
+    mimeType: string
+    storagePath?: string | null
+  },
+): Promise<string> {
+  if (opts.type === "AUDIO") {
+    throw new Error("Envio de áudio ainda não está habilitado")
+  }
+  if (!opts.storagePath) {
+    throw new Error("Arquivo sem caminho local para envio")
+  }
+
+  const fileBuffer = await fs.readFile(absoluteUploadPath(opts.storagePath))
+  const media = fileBuffer.toString("base64")
+
+  const res = await fetch(`${EVOLUTION_BASE}/message/sendMedia/${instanceId}`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json", apikey: EVOLUTION_KEY },
+    body: JSON.stringify({
+      number: recipientPhone,
+      mediatype: mediaTypeForEvolution(opts.type),
+      mimetype: opts.mimeType,
+      caption: opts.body ?? "",
+      media,
+      fileName: opts.fileName,
+    }),
+  })
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "")
+    throw new Error(`Evolution API HTTP ${res.status}: ${detail.slice(0, 200)}`)
+  }
+
+  const json = await res.json() as { key?: { id?: string } }
+  return json.key?.id ?? ""
+}
+
+function isMediaOutbound(msg: { messageType: string; payload: unknown }) {
+  return msg.messageType !== "text" && !!msg.payload
 }
 
 export async function runOutboundSender(
@@ -77,33 +126,63 @@ export async function runOutboundSender(
 
     for (const msg of toProcess) {
       try {
-        const waMessageId = await sendViaEvolution(
-          msg.instanceId,
-          msg.recipientPhone,
-          msg.body ?? "",
-        )
+        const payload = (msg.payload ?? {}) as {
+          attachmentId?: string
+          type?: AttachmentKind
+          fileName?: string
+          mimeType?: string
+          storagePath?: string | null
+        }
+        const isMedia = isMediaOutbound(msg)
+        const waMessageId = isMedia
+          ? await sendMediaViaEvolution(msg.instanceId, msg.recipientPhone, {
+              body: msg.body,
+              type: payload.type ?? "DOCUMENT",
+              fileName: payload.fileName ?? "arquivo",
+              mimeType: payload.mimeType ?? "application/octet-stream",
+              storagePath: payload.storagePath,
+            })
+          : await sendViaEvolution(
+              msg.instanceId,
+              msg.recipientPhone,
+              msg.body ?? "",
+            )
 
         // Persist to history only after confirmed send
-        await db.$transaction([
-          db.outboundMessage.update({
+        await db.$transaction(async (tx) => {
+          await tx.outboundMessage.update({
             where: { id: msg.id },
             data:  { status: "SENT", waMessageId: waMessageId || null, sentAt: new Date(), error: null },
-          }),
-          db.message.create({
+          })
+
+          const savedMessage = await tx.message.create({
             data: {
               conversationId: msg.conversationId,
               authorName:     "Atendente",
               role:           "ATENDENTE",
-              text:           msg.body ?? "",
+              text:           msg.body || (isMedia ? payload.fileName ?? "[arquivo]" : ""),
               isAiGenerated:  false,
               align:          "right",
             },
-          }),
-          db.conversation.update({
+            select: { id: true },
+          })
+
+          if (isMedia && payload.attachmentId) {
+            await tx.messageAttachment.update({
+              where: { id: payload.attachmentId },
+              data: {
+                messageId: savedMessage.id,
+                source: "WHATSAPP_OUTBOUND",
+                metadata: { waMessageId },
+              },
+            })
+          }
+
+          await tx.conversation.update({
             where: { id: msg.conversationId },
-            data:  { preview: (msg.body ?? "").slice(0, 200), lastMessageAt: new Date() },
-          }),
-        ])
+            data:  { preview: (msg.body || (isMedia ? payload.fileName ?? "[arquivo]" : "")).slice(0, 200), lastMessageAt: new Date() },
+          })
+        })
 
         await handle.log("info", `Enviada → ${msg.recipientPhone}`, {
           itemId: msg.id,

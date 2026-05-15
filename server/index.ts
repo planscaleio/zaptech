@@ -32,7 +32,7 @@ const PORT = Number(process.env.PORT ?? 3002)
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
-app.use(express.json({ limit: "10mb" }))
+app.use(express.json({ limit: "75mb" }))
 app.use(express.urlencoded({ extended: true }))
 
 // Request logger
@@ -51,6 +51,7 @@ app.get("/health", (_req, res) => {
 // Webhook e links públicos — fora do prefixo /api
 app.use("/webhook/evolution", evolutionWebhook)
 app.use("/r", publicDynamicRedirectRouter)
+app.use("/uploads", express.static(path.resolve(process.cwd(), process.env.MEDIA_UPLOAD_DIR ?? "uploads")))
 
 // ─── API routes (prefixo /api) ────────────────────────────────────────────────
 

@@ -108,7 +108,10 @@ Regras:
     const parsed = JSON.parse(jsonMatch[0])
     return res.json(parsed)
   } catch (err) {
-    return res.status(502).json({ error: "Não foi possível gerar sugestão. Verifique se o Ollama está ativo." })
+    return res.status(503).json({
+      code: "AI_UNAVAILABLE",
+      error: "IA indisponível no momento. Tente novamente em instantes.",
+    })
   }
 })
 

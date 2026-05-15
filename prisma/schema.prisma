@@ -83,6 +83,13 @@ enum MessageRole {
   SISTEMA
 }
 
+enum MessageAttachmentType {
+  IMAGE
+  AUDIO
+  DOCUMENT
+  VIDEO
+}
+
 enum AgentStatus {
   ONLINE
   BUSY
@@ -406,6 +413,7 @@ model Company {
   tags              Tag[]
   supportTickets    SupportTicket[]
   businessAccounts  BusinessAccount[]
+  messageAttachments MessageAttachment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -616,6 +624,7 @@ model Conversation {
   aiAudits         AIAudit[]
   outboundMessages OutboundMessage[]
   quotes           Quote[]
+  attachments      MessageAttachment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -639,11 +648,39 @@ model Message {
   align          String?     @default("left")
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachments  MessageAttachment[]
 
   createdAt DateTime @default(now())
 
   @@index([conversationId])
   @@index([conversationId, createdAt])
+}
+
+model MessageAttachment {
+  id             String                @id @default(cuid())
+  companyId      String
+  conversationId String
+  messageId      String?
+  type           MessageAttachmentType
+  fileName       String
+  mimeType       String
+  size           Int?
+  url            String
+  storagePath    String?
+  source         String                @default("LOCAL")
+  externalUrl    String?
+  metadata       Json?
+
+  company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message?     @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([companyId])
+  @@index([conversationId])
+  @@index([messageId])
+  @@index([type])
 }
 
 /// Per-company tag reused by conversations and customers

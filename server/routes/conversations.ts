@@ -2,6 +2,7 @@ import { Router, Request, Response } from "express"
 import { db } from "../db.js"
 import { resolveAttendant, assignConversation } from "../lib/distributionEngine.js"
 import { sendEmailReply } from "../lib/email-service.js"
+import { saveBase64Attachment } from "../lib/media-storage.js"
 
 const router = Router()
 
@@ -117,6 +118,18 @@ router.get("/:id/messages", async (req: Request, res: Response) => {
           align: true,
           isAiGenerated: true,
           createdAt: true,
+          attachments: {
+            orderBy: { createdAt: "asc" },
+            select: {
+              id: true,
+              type: true,
+              fileName: true,
+              mimeType: true,
+              size: true,
+              url: true,
+              externalUrl: true,
+            },
+          },
         },
       },
       tags: {
@@ -133,13 +146,76 @@ router.get("/:id/messages", async (req: Request, res: Response) => {
   })
 })
 
+// POST /conversations/:id/attachments — upload local de anexos antes do envio
+router.post("/:id/attachments", async (req: Request, res: Response) => {
+  const { id } = req.params
+  const files = Array.isArray(req.body?.files) ? req.body.files : []
+
+  if (files.length === 0) return res.status(400).json({ error: "Nenhum arquivo enviado" })
+  if (files.length > 5) return res.status(400).json({ error: "Envie no máximo 5 arquivos por mensagem" })
+
+  const conversation = await db.conversation.findUnique({
+    where: { id },
+    select: { id: true, companyId: true },
+  })
+  if (!conversation) return res.status(404).json({ error: "Conversa não encontrada" })
+
+  try {
+    const attachments = []
+    for (const file of files) {
+      const fileName = typeof file?.fileName === "string" ? file.fileName : "arquivo"
+      const mimeType = typeof file?.mimeType === "string" ? file.mimeType : "application/octet-stream"
+      const base64 = typeof file?.base64 === "string" ? file.base64 : ""
+      if (!base64) return res.status(400).json({ error: "Arquivo inválido" })
+
+      const saved = await saveBase64Attachment({
+        companyId: conversation.companyId,
+        conversationId: conversation.id,
+        fileName,
+        mimeType,
+        base64,
+      })
+
+      const attachment = await db.messageAttachment.create({
+        data: {
+          companyId: conversation.companyId,
+          conversationId: conversation.id,
+          type: saved.type,
+          fileName: saved.fileName,
+          mimeType: saved.mimeType,
+          size: saved.size,
+          storagePath: saved.storagePath,
+          url: saved.url,
+          source: "LOCAL",
+        },
+        select: {
+          id: true,
+          type: true,
+          fileName: true,
+          mimeType: true,
+          size: true,
+          url: true,
+        },
+      })
+      attachments.push(attachment)
+    }
+
+    return res.status(201).json({ attachments })
+  } catch (err) {
+    return res.status(400).json({ error: err instanceof Error ? err.message : "Falha ao salvar anexo" })
+  }
+})
+
 // POST /conversations/:id/reply — envia mensagem via Evolution API e persiste no banco
 router.post("/:id/reply", async (req: Request, res: Response) => {
   const { id } = req.params
   const { text, clientRequestId, userId, authorName } = req.body ?? {}
+  const attachmentIds = Array.isArray(req.body?.attachmentIds)
+    ? req.body.attachmentIds.filter((value: unknown): value is string => typeof value === "string")
+    : []
 
-  if (!text?.trim()) {
-    return res.status(400).json({ error: "text é obrigatório" })
+  if (!text?.trim() && attachmentIds.length === 0) {
+    return res.status(400).json({ error: "text ou anexo é obrigatório" })
   }
 
   const conversation = await db.conversation.findUnique({
@@ -156,7 +232,23 @@ router.post("/:id/reply", async (req: Request, res: Response) => {
 
   if (!conversation) return res.status(404).json({ error: "Conversa não encontrada" })
 
+  const attachments = attachmentIds.length > 0
+    ? await db.messageAttachment.findMany({
+        where: { id: { in: attachmentIds }, conversationId: id, messageId: null },
+        orderBy: { createdAt: "asc" },
+      })
+    : []
+
+  if (attachmentIds.length > 0 && attachments.length !== attachmentIds.length) {
+    return res.status(400).json({ error: "Anexo inválido ou já enviado" })
+  }
+
+  if (attachments.some((attachment) => attachment.type === "AUDIO")) {
+    return res.status(422).json({ error: "Envio de áudio fica para a próxima versão" })
+  }
+
   if (conversation.channel === "EMAIL") {
+    if (attachments.length > 0) return res.status(422).json({ error: "Anexos em e-mail ficam para a próxima versão" })
     if (!conversation.emailAccountId) return res.status(422).json({ error: "Conversa sem conta de e-mail vinculada" })
     if (!conversation.customer?.email) return res.status(422).json({ error: "Cliente sem e-mail cadastrado" })
 
@@ -205,6 +297,37 @@ router.post("/:id/reply", async (req: Request, res: Response) => {
     select: { name: true },
   })
   const instanceId = connector?.name ?? process.env.EVOLUTION_INSTANCE_NAME ?? "default"
+
+  if (attachments.length > 0) {
+    const queued = []
+    for (let index = 0; index < attachments.length; index++) {
+      const attachment = attachments[index]
+      const caption = index === 0 ? text?.trim() || null : null
+      const outbound = await db.outboundMessage.create({
+        data: {
+          companyId:       conversation.companyId,
+          conversationId:  id,
+          instanceId,
+          recipientPhone:  conversation.customer.phone,
+          messageType:     attachment.type.toLowerCase(),
+          body:            caption,
+          status:          "QUEUED",
+          createdByUserId: userId ?? null,
+          clientRequestId: clientRequestId ? `${clientRequestId}:${attachment.id}` : null,
+          payload: {
+            attachmentId: attachment.id,
+            type: attachment.type,
+            fileName: attachment.fileName,
+            mimeType: attachment.mimeType,
+            storagePath: attachment.storagePath,
+            url: attachment.url,
+          },
+        },
+      })
+      queued.push(outbound.id)
+    }
+    return res.status(202).json({ queued: true, outboundMessageIds: queued })
+  }
 
   // Enfileira — o outbound-sender.worker fará o envio com retry
   const outbound = await db.outboundMessage.upsert({
