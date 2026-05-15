@@ -2,7 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { Router, type Request, type Response } from "express"
 import { db } from "../db.js"
-import { absoluteUploadPath, uploadUrlFromRelativePath } from "../lib/media-storage.js"
+import { absoluteUploadPath, extensionForMime, uploadUrlFromRelativePath } from "../lib/media-storage.js"
 
 const router = Router()
 
@@ -25,6 +25,45 @@ function contentDisposition(fileName: string, mode: "inline" | "attachment") {
   return `${mode}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
 }
 
+async function statIfExists(filePath: string) {
+  try {
+    return await fs.promises.stat(filePath)
+  } catch {
+    return null
+  }
+}
+
+async function resolveExistingFile(storagePath: string, mimeType?: string | null) {
+  const directPath = absoluteUploadPath(storagePath)
+  const directStat = await statIfExists(directPath)
+  if (directStat) return { absolutePath: directPath, stat: directStat }
+
+  if (path.extname(storagePath)) return null
+
+  const expectedExt = mimeType ? extensionForMime(mimeType) : ""
+  const candidateExts = [
+    expectedExt,
+    ".ogg",
+    ".opus",
+    ".webm",
+    ".mp3",
+    ".m4a",
+    ".pdf",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+  ].filter(Boolean)
+
+  for (const ext of [...new Set(candidateExts)]) {
+    const candidatePath = absoluteUploadPath(`${storagePath}${ext}`)
+    const candidateStat = await statIfExists(candidatePath)
+    if (candidateStat) return { absolutePath: candidatePath, stat: candidateStat }
+  }
+
+  return null
+}
+
 router.get("/*path", async (req: Request, res: Response) => {
   const requestedPath = Array.isArray(req.params.path) ? req.params.path.join("/") : req.params.path
   const decodedPath = requestedPath.split("/").map((part) => {
@@ -38,19 +77,22 @@ router.get("/*path", async (req: Request, res: Response) => {
   const url = uploadUrlFromRelativePath(normalizedPath)
 
   const attachment = await db.messageAttachment.findFirst({
-    where: { OR: [{ url }, { storagePath: normalizedPath }] },
-    select: { fileName: true, mimeType: true, storagePath: true },
+    where: {
+      OR: [
+        { url },
+        { storagePath: normalizedPath },
+        { url: `/uploads/${normalizedPath}` },
+      ],
+    },
+    select: { fileName: true, mimeType: true, storagePath: true, url: true },
   })
 
   const storagePath = attachment?.storagePath ?? normalizedPath
-  const absolutePath = absoluteUploadPath(storagePath)
-
-  let stat: fs.Stats
-  try {
-    stat = await fs.promises.stat(absolutePath)
-  } catch {
+  const resolved = await resolveExistingFile(storagePath, attachment?.mimeType)
+  if (!resolved) {
     return res.status(404).json({ error: "Arquivo não encontrado" })
   }
+  const { absolutePath, stat } = resolved
 
   const mimeType = attachment?.mimeType ?? "application/octet-stream"
   const fileName = attachment?.fileName ?? path.basename(absolutePath)

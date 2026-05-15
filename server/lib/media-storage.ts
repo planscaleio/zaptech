@@ -27,7 +27,7 @@ const ALLOWED_MIME_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ])
 
-const MIME_EXTENSIONS: Record<string, string> = {
+export const MIME_EXTENSIONS: Record<string, string> = {
   "image/jpeg": ".jpg",
   "image/png": ".png",
   "image/webp": ".webp",
@@ -93,6 +93,10 @@ export function uploadUrlFromRelativePath(relativePath: string) {
 
 export function absoluteUploadPath(relativePath: string) {
   return path.join(UPLOAD_ROOT, relativePath)
+}
+
+export function extensionForMime(mimeType: string) {
+  return MIME_EXTENSIONS[mimeType] ?? ""
 }
 
 export async function saveBase64Attachment(opts: {

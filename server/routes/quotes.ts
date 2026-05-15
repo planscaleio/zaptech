@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express"
 import { db } from "../db.js"
+import { resolveEvolutionInstanceId } from "../lib/evolution-instance.js"
 
 const router = Router()
 
@@ -249,11 +250,7 @@ router.post("/:id/send", async (req: Request, res: Response) => {
   const recipientPhone = quote.conversation.customer?.phone ?? quote.customer.phone
   if (!recipientPhone) return res.status(422).json({ error: "Cliente sem telefone cadastrado" })
 
-  const connector = await db.connector.findFirst({
-    where: { companyId: quote.companyId, type: "CANAL", status: "CONECTADO" },
-    select: { name: true },
-  })
-  const instanceId = connector?.name ?? process.env.EVOLUTION_INSTANCE_NAME ?? "default"
+  const instanceId = await resolveEvolutionInstanceId(quote.companyId)
   const safeAuthorName = authorName?.trim() || "Atendente"
   const body = formatQuoteMessage(quote, safeAuthorName)
 

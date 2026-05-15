@@ -3,12 +3,9 @@ import { db } from "../db.js"
 import { resolveAttendant, assignConversation } from "../lib/distributionEngine.js"
 import { sendEmailReply } from "../lib/email-service.js"
 import { saveBase64Attachment } from "../lib/media-storage.js"
+import { resolveEvolutionInstanceId } from "../lib/evolution-instance.js"
 
 const router = Router()
-
-const EVOLUTION_BASE = process.env.EVOLUTION_BASE_URL!
-const EVOLUTION_KEY  = process.env.EVOLUTION_API_KEY!
-const EVOLUTION_INST = process.env.EVOLUTION_INSTANCE_NAME!
 
 // GET /conversations/unread-count?companyId=  — must be before /:id routes
 router.get("/unread-count", async (req: Request, res: Response) => {
@@ -291,12 +288,7 @@ router.post("/:id/reply", async (req: Request, res: Response) => {
 
   if (!conversation.customer?.phone) return res.status(422).json({ error: "Cliente sem telefone cadastrado" })
 
-  // Resolve instanceId pelo conector ativo da empresa
-  const connector = await db.connector.findFirst({
-    where: { companyId: conversation.companyId, type: "CANAL", status: "CONECTADO" },
-    select: { name: true },
-  })
-  const instanceId = connector?.name ?? process.env.EVOLUTION_INSTANCE_NAME ?? "default"
+  const instanceId = await resolveEvolutionInstanceId(conversation.companyId)
 
   if (attachments.length > 0) {
     const queued = []

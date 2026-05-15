@@ -178,6 +178,7 @@ async function onConnectionUpdate(instance: string, data: Record<string, unknown
     update: {
       status: conn.state === "open" ? "CONECTADO" : conn.state === "connecting" ? "REVISAR" : "DESCONECTADO",
       details: `Estado: ${conn.state} — ${new Date().toLocaleString("pt-BR")}`,
+      config: { instanceId: instance },
       lastEventAt: new Date(),
     },
     create: {
@@ -186,6 +187,7 @@ async function onConnectionUpdate(instance: string, data: Record<string, unknown
       type: "CANAL",
       status: conn.state === "open" ? "CONECTADO" : "DESCONECTADO",
       details: `Estado: ${conn.state}`,
+      config: { instanceId: instance },
       lastEventAt: new Date(),
     },
   })
