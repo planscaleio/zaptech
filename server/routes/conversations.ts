@@ -418,4 +418,99 @@ router.post("/:id/assign", async (req: Request, res: Response) => {
   return res.json({ ok: true, attendantId: targetUserId })
 })
 
+// POST /conversations/:id/transfer  { mode, targetId, note?, authorName? }
+router.post("/:id/transfer", async (req: Request, res: Response) => {
+  const conv = await db.conversation.findUnique({
+    where: { id: req.params.id },
+    select: { id: true, companyId: true, channel: true, emailAccountId: true, customer: { select: { phone: true, email: true } } },
+  })
+  if (!conv) return res.status(404).json({ error: "Conversa não encontrada" })
+
+  const { mode, targetId, note, authorName } = req.body ?? {}
+  if (!mode || !targetId) return res.status(400).json({ error: "mode e targetId são obrigatórios" })
+  if (mode !== "user" && mode !== "team") return res.status(400).json({ error: "mode deve ser 'user' ou 'team'" })
+
+  let resolvedUserId: string | null = null
+  let targetName: string
+
+  if (mode === "user") {
+    const user = await db.user.findFirst({ where: { id: targetId, companyId: conv.companyId }, select: { id: true, name: true } })
+    if (!user) return res.status(404).json({ error: "Usuário não encontrado nesta empresa" })
+    resolvedUserId = user.id
+    targetName = user.name
+  } else {
+    const team = await db.salesTeam.findUnique({ where: { id: targetId }, select: { name: true } })
+    if (!team) return res.status(404).json({ error: "Time não encontrado" })
+    targetName = team.name
+  }
+
+  const company = await db.company.findUnique({
+    where: { id: conv.companyId },
+    select: { transferMessageUser: true, transferMessageTeam: true },
+  })
+
+  const tplUser = company?.transferMessageUser ?? "Você será atendido por {nome}."
+  const tplTeam = company?.transferMessageTeam ?? "Você foi transferido para nossa equipe de {nome}."
+  const clientText = mode === "user"
+    ? tplUser.replace("{nome}", targetName)
+    : tplTeam.replace("{nome}", targetName)
+
+  // Update conversation
+  if (mode === "user") {
+    await assignConversation(conv.id, resolvedUserId!, conv.companyId)
+  } else {
+    await db.conversation.update({ where: { id: conv.id }, data: { attendantId: null } })
+  }
+
+  // System message (internal note)
+  const safeAuthor = authorName?.trim() || "Sistema"
+  await db.message.create({
+    data: {
+      conversationId: conv.id,
+      authorName: safeAuthor,
+      role: "SISTEMA",
+      text: note?.trim()
+        ? `Conversa transferida para ${targetName}. Nota: ${note.trim()}`
+        : `Conversa transferida para ${targetName}.`,
+      align: "left",
+    },
+  })
+
+  // Send message to client
+  if (conv.channel === "EMAIL" && conv.emailAccountId) {
+    const msg = await db.message.create({
+      data: {
+        conversationId: conv.id,
+        authorName: safeAuthor,
+        role: "ATENDENTE",
+        text: clientText,
+        align: "right",
+      },
+    })
+    await sendEmailReply(conv.id, msg.id, clientText)
+  } else if (conv.channel !== "TELEFONE" && conv.channel !== "WEBHOOK" && conv.customer?.phone) {
+    const instanceId = await resolveEvolutionInstanceId(conv.companyId)
+    if (instanceId) {
+      await db.outboundMessage.create({
+        data: {
+          companyId: conv.companyId,
+          conversationId: conv.id,
+          instanceId,
+          recipientPhone: conv.customer.phone,
+          messageType: "text",
+          body: clientText,
+          status: "QUEUED",
+        },
+      })
+    }
+  }
+
+  await db.conversation.update({
+    where: { id: conv.id },
+    data: { preview: clientText.slice(0, 80), lastMessageAt: new Date() },
+  })
+
+  return res.json({ ok: true, attendantId: resolvedUserId })
+})
+
 export default router

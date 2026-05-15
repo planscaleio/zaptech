@@ -17,6 +17,7 @@ router.get("/company", async (req: Request, res: Response) => {
     select: {
       id: true, name: true, slug: true, status: true,
       ownerName: true, email: true, phone: true, cnpj: true, city: true,
+      transferMessageUser: true, transferMessageTeam: true,
       mrr: true, trialEndsAt: true, nextBilling: true,
       currentUsers: true, currentChats: true, currentAgents: true,
       plan: { select: { id: true, name: true, maxUsers: true } },
@@ -29,7 +30,7 @@ router.get("/company", async (req: Request, res: Response) => {
 // ─── PATCH /settings/company ─────────────────────────────────────────────────
 
 router.patch("/company", async (req: Request, res: Response) => {
-  const { companyId, name, ownerName, email, phone, cnpj, city } = req.body ?? {}
+  const { companyId, name, ownerName, email, phone, cnpj, city, transferMessageUser, transferMessageTeam } = req.body ?? {}
   if (!companyId) return res.status(400).json({ error: "companyId é obrigatório" })
 
   const company = await db.company.update({
@@ -41,8 +42,10 @@ router.patch("/company", async (req: Request, res: Response) => {
       ...(phone     !== undefined ? { phone }     : {}),
       ...(cnpj      !== undefined ? { cnpj }      : {}),
       ...(city      !== undefined ? { city }      : {}),
+      ...(transferMessageUser !== undefined ? { transferMessageUser } : {}),
+      ...(transferMessageTeam !== undefined ? { transferMessageTeam } : {}),
     },
-    select: { id: true, name: true, ownerName: true, email: true, phone: true, cnpj: true, city: true },
+    select: { id: true, name: true, ownerName: true, email: true, phone: true, cnpj: true, city: true, transferMessageUser: true, transferMessageTeam: true },
   })
   return res.json(company)
 })

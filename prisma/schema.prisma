@@ -376,6 +376,9 @@ model Company {
   cnpj      String?
   city      String?
 
+  transferMessageUser String?   // ex: "Você será atendido por {nome}."
+  transferMessageTeam String?   // ex: "Você foi transferido para nossa equipe de {nome}."
+
   mrr         Decimal   @default(0) @db.Decimal(10, 2)
   nextBilling DateTime?
   trialEndsAt DateTime?

@@ -44,6 +44,8 @@ interface CompanyData {
   phone: string | null
   cnpj: string | null
   city: string | null
+  transferMessageUser?: string | null
+  transferMessageTeam?: string | null
   mrr: string | number
   trialEndsAt: string | null
   nextBilling: string | null
@@ -1215,6 +1217,8 @@ function IASection({ companyId, token }: { companyId: string; token: string }) {
           {/* Ollama test */}
           <OllamaStatusCard token={token} />
 
+          <TransferMessagesCard companyId={companyId} token={token} />
+
         </div>
       </div>
     </div>
@@ -1258,6 +1262,76 @@ function OllamaStatusCard({ token }: { token: string }) {
           {status === "ok"       && <CheckCircle2 className="size-3.5" />}
           {status === "error"    && <XCircle className="size-3.5" />}
           {detail || "Verificando…"}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TransferMessagesCard({ companyId, token }: { companyId: string; token: string }) {
+  const [msgUser, setMsgUser] = useState("")
+  const [msgTeam, setMsgTeam] = useState("")
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    fetch(`/api/settings/company?companyId=${companyId}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => r.json())
+      .then((d: CompanyData) => {
+        setMsgUser(d.transferMessageUser ?? "")
+        setMsgTeam(d.transferMessageTeam ?? "")
+      })
+      .finally(() => setLoading(false))
+  }, [companyId, token])
+
+  async function save() {
+    setSaving(true)
+    setSaved(false)
+    try {
+      const res = await fetch("/api/settings/company", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ companyId, transferMessageUser: msgUser || null, transferMessageTeam: msgTeam || null }),
+      })
+      if (res.ok) { setSaved(true); setTimeout(() => setSaved(false), 2000) }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border p-4">
+      <p className="text-sm font-semibold">Mensagem ao transferir</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">Use {"{nome}"} para o nome do destino</p>
+      {loading ? (
+        <div className="flex items-center justify-center py-4"><Loader2 className="size-4 animate-spin text-muted-foreground" /></div>
+      ) : (
+        <div className="mt-3 space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium">Transferir para pessoa</label>
+            <input
+              type="text"
+              className="w-full rounded-md border bg-transparent px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary"
+              placeholder="Você será atendido por {nome}."
+              value={msgUser}
+              onChange={(e) => setMsgUser(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium">Transferir para time</label>
+            <input
+              type="text"
+              className="w-full rounded-md border bg-transparent px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary"
+              placeholder="Você foi transferido para nossa equipe de {nome}."
+              value={msgTeam}
+              onChange={(e) => setMsgTeam(e.target.value)}
+            />
+          </div>
+          <Button size="sm" onClick={save} disabled={saving}>
+            {saving && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+            {saved ? "Salvo" : "Salvar"}
+          </Button>
         </div>
       )}
     </div>

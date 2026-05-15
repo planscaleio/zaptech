@@ -16,6 +16,7 @@ import {
   Activity,
   Archive,
   ArchiveX,
+  ArrowRightLeft,
   Bell,
   BookOpenText,
   Bot,
@@ -42,6 +43,7 @@ import {
   Layers3,
   LifeBuoy,
   Loader2,
+  Lock,
   Pencil,
   Mail,
   Maximize2,
@@ -987,6 +989,19 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   const [tagLoading, setTagLoading] = useState(false)
   const [tagError, setTagError] = useState("")
 
+  // Transfer conversation state
+  const [transferOpen, setTransferOpen] = useState(false)
+  const [transferMode, setTransferMode] = useState<"user" | "team">("user")
+  const [transferTargetId, setTransferTargetId] = useState("")
+  const [transferNote, setTransferNote] = useState("")
+  const [transferSaving, setTransferSaving] = useState(false)
+  const [transferError, setTransferError] = useState("")
+  const [transferDone, setTransferDone] = useState(false)
+  const [transferUsers, setTransferUsers] = useState<{ id: string; name: string; role: string }[]>([])
+  const [transferTeams, setTransferTeams] = useState<{ id: string; name: string }[]>([])
+  const [transferSearch, setTransferSearch] = useState("")
+  const [transferLoading, setTransferLoading] = useState(false)
+
   // Tags currently applied on the selected conversation (derived + writable)
   const appliedTagNames = useMemo(
     () => new Set((selected?.tags ?? []).map((t) => t.name)),
@@ -1732,6 +1747,56 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
     }
   }
 
+  function openTransferModal() {
+    if (!selected || !companyId) return
+    setTransferMode("user")
+    setTransferTargetId("")
+    setTransferNote("")
+    setTransferError("")
+    setTransferDone(false)
+    setTransferSearch("")
+    setTransferLoading(true)
+    setTransferOpen(true)
+    Promise.all([
+      fetch(`/api/settings/users?companyId=${companyId}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .then((d) => (Array.isArray(d) ? d : [])),
+      fetch(`/api/teams?companyId=${companyId}`, { headers: { Authorization: `Bearer ${token}` } })
+        .then((r) => r.json())
+        .then((d) => Array.isArray(d) ? d : d.teams ?? []),
+    ]).then(([users, teams]) => {
+      setTransferUsers(users)
+      setTransferTeams(teams)
+      setTransferLoading(false)
+    }).catch(() => setTransferLoading(false))
+  }
+
+  async function saveTransfer() {
+    if (!selected || !transferTargetId) return
+    setTransferError("")
+    setTransferSaving(true)
+    try {
+      const res = await fetch(`/api/conversations/${selected.id}/transfer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: transferMode,
+          targetId: transferTargetId,
+          note: transferNote || undefined,
+          authorName: auth?.name ?? undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setTransferError(data.error ?? "Erro ao transferir"); return }
+      setTransferDone(true)
+      refreshActiveConversation(selected.id)
+    } catch {
+      setTransferError("Erro de conexão")
+    } finally {
+      setTransferSaving(false)
+    }
+  }
+
   function quoteTotalPreview() {
     return quoteItems.reduce((sum, item) => {
       const subtotal = Number(item.quantity || 0) * Number(item.unitPrice || 0)
@@ -2444,7 +2509,17 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
 
               <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
                 {selected.messages.map((msg) => (
-                  <div key={msg.id} className={cn("flex gap-3", msg.align === "right" && "justify-end")}>
+                  msg.role === "SISTEMA" ? (
+                    <div key={msg.id} className="flex justify-center py-0.5">
+                      <div className="flex items-center gap-1.5 rounded-full border border-dashed border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500">
+                        <Lock className="size-3 shrink-0" />
+                        <span className="font-medium">Nota interna</span>
+                        <span className="mx-1 text-slate-300">&middot;</span>
+                        <span>{msg.text}</span>
+                      </div>
+                    </div>
+                  ) : (
+                  <div className={cn("flex gap-3", msg.align === "right" && "justify-end")}>
                     {msg.align === "left" && (
                       <Avatar className="size-8">
                         <AvatarFallback className={msg.isAiGenerated ? "bg-cyan-50 text-cyan-700" : "bg-slate-100 text-slate-600"}>
@@ -2478,6 +2553,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                       <MessageAttachments attachments={msg.attachments} outgoing={msg.align === "right"} />
                     </div>
                   </div>
+                  )
                 ))}
                 <div ref={messagesEndRef} />
               </div>
@@ -3499,6 +3575,111 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
           </SheetContent>
         </Sheet>
 
+        {/* ── Transfer Sheet ────────────────────────────────────────────── */}
+        <Sheet open={transferOpen && !!selected} onOpenChange={(open) => { if (!open) setTransferOpen(false) }}>
+          <SheetContent className="sm:max-w-sm">
+            <SheetHeader>
+              <div className="flex items-center gap-2">
+                <div className="flex size-8 items-center justify-center rounded-full bg-primary/10">
+                  <ArrowRightLeft className="size-4 text-primary" />
+                </div>
+                <div className="min-w-0">
+                  <SheetTitle>Transferir conversa</SheetTitle>
+                  <p className="truncate text-xs text-muted-foreground">{selected?.customer.name}</p>
+                </div>
+              </div>
+            </SheetHeader>
+            <div className="mt-4 space-y-4">
+              {transferDone ? (
+                <div className="flex flex-col items-center gap-3 py-6">
+                  <div className="flex size-12 items-center justify-center rounded-full bg-emerald-50">
+                    <CheckCircle2 className="size-6 text-emerald-600" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">Conversa transferida com sucesso</p>
+                  <Button size="sm" onClick={() => setTransferOpen(false)}>Fechar</Button>
+                </div>
+              ) : (
+                <>
+                  {/* Toggle: user / team */}
+                  <div className="flex rounded-lg border p-0.5">
+                    <button
+                      className={cn("flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors", transferMode === "user" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
+                      onClick={() => { setTransferMode("user"); setTransferTargetId("") }}
+                    >Para pessoa</button>
+                    <button
+                      className={cn("flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors", transferMode === "team" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
+                      onClick={() => { setTransferMode("team"); setTransferTargetId("") }}
+                    >Para time</button>
+                  </div>
+
+                  {/* Search */}
+                  <input
+                    type="text"
+                    placeholder="Buscar..."
+                    className="w-full rounded-md border bg-transparent px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary"
+                    value={transferSearch}
+                    onChange={(e) => setTransferSearch(e.target.value)}
+                  />
+
+                  {/* List */}
+                  <div className="max-h-48 space-y-1 overflow-y-auto">
+                    {transferLoading ? (
+                      <div className="flex items-center justify-center py-4"><Loader2 className="size-4 animate-spin text-muted-foreground" /></div>
+                    ) : transferMode === "user" ? (
+                      transferUsers
+                        .filter((u) => u.name.toLowerCase().includes(transferSearch.toLowerCase()))
+                        .map((u) => (
+                          <button
+                            key={u.id}
+                            className={cn("flex w-full items-center justify-between rounded-md px-3 py-2 text-xs transition-colors hover:bg-muted", transferTargetId === u.id && "ring-1 ring-primary bg-primary/5")}
+                            onClick={() => setTransferTargetId(u.id)}
+                          >
+                            <span className="font-medium">{u.name}</span>
+                            <span className="text-muted-foreground">{u.role}</span>
+                          </button>
+                        ))
+                    ) : (
+                      transferTeams
+                        .filter((t) => t.name.toLowerCase().includes(transferSearch.toLowerCase()))
+                        .map((t) => (
+                          <button
+                            key={t.id}
+                            className={cn("flex w-full items-center justify-between rounded-md px-3 py-2 text-xs transition-colors hover:bg-muted", transferTargetId === t.id && "ring-1 ring-primary bg-primary/5")}
+                            onClick={() => setTransferTargetId(t.id)}
+                          >
+                            <span className="font-medium">{t.name}</span>
+                          </button>
+                        ))
+                    )}
+                  </div>
+
+                  {/* Note */}
+                  <textarea
+                    placeholder="Motivo interno (opcional)"
+                    className="w-full rounded-md border bg-transparent px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary"
+                    rows={2}
+                    value={transferNote}
+                    onChange={(e) => setTransferNote(e.target.value)}
+                  />
+
+                  {transferError && <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{transferError}</p>}
+
+                  {/* Confirm */}
+                  <Button
+                    className="w-full"
+                    size="sm"
+                    disabled={!transferTargetId || transferSaving}
+                    onClick={saveTransfer}
+                  >
+                    {transferSaving && <Loader2 className="mr-1.5 size-3.5 animate-spin" />}
+                    Confirmar transferência
+                  </Button>
+                </>
+              )}
+            </div>
+          </SheetContent>
+        </Sheet>
+
         {/* Right — context sidebar */}
         <aside className="min-h-0 space-y-3 overflow-y-auto pr-1">
           {/* ── Ações rápidas ───────────────────────────────────────────── */}
@@ -3528,6 +3709,16 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
               >
                 <LifeBuoy className="size-3.5" />
                 Abrir chamado
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start gap-2"
+                onClick={openTransferModal}
+                disabled={!selected}
+              >
+                <ArrowRightLeft className="size-3.5" />
+                Transferir conversa
               </Button>
             </CardContent>
           </Card>
