@@ -76,6 +76,39 @@ type UploadAttachment = {
   metadata: unknown
 }
 
+function uploadRequestContext(storagePath: string) {
+  const parts = storagePath.split(/[\\/]/)
+  const conversationsIndex = parts.indexOf("conversations")
+  if (conversationsIndex < 0) return null
+
+  const companyId = parts[conversationsIndex + 1]
+  const conversationId = parts[conversationsIndex + 2]
+  const fileName = parts[parts.length - 1] ?? ""
+  const waMessageId = fileName.match(/(?:audio|image|document|video)-([A-Z0-9]+)$/i)?.[1] ?? null
+
+  if (!companyId || !conversationId || !waMessageId) return null
+  return { companyId, conversationId, fileName, waMessageId }
+}
+
+function mediaInfoFromPayload(payload: unknown) {
+  const msg = payload as { message?: Record<string, unknown>; messageType?: string; key?: { id?: string } }
+  const messageType = msg.messageType ?? ""
+  const node = msg.message?.[messageType]
+  const media = node && typeof node === "object" ? node as Record<string, unknown> : {}
+
+  const mimeType = typeof media.mimetype === "string"
+    ? media.mimetype
+    : messageType === "audioMessage"
+    ? "audio/ogg"
+    : "application/octet-stream"
+  const fileName =
+    (typeof media.fileName === "string" && media.fileName) ||
+    (typeof media.title === "string" && media.title) ||
+    `${messageType.replace("Message", "") || "arquivo"}-${msg.key?.id ?? Date.now()}`
+
+  return { mimeType, fileName }
+}
+
 async function repairMissingAttachmentFile(attachment: UploadAttachment) {
   const metadata = attachment.metadata as { waMessageId?: string | null } | null
   if (!metadata?.waMessageId) return null
@@ -107,6 +140,31 @@ async function repairMissingAttachmentFile(attachment: UploadAttachment) {
       url: saved.url,
       metadata: { ...(attachment.metadata as object), downloadMethod: "evolution-base64", repairedAt: new Date().toISOString() },
     },
+  })
+
+  return resolveExistingFile(saved.storagePath, saved.mimeType)
+}
+
+async function repairMissingFileFromRequest(storagePath: string) {
+  const context = uploadRequestContext(storagePath)
+  if (!context) return null
+
+  const inbound = await db.inboundMessage.findFirst({
+    where: { companyId: context.companyId, waMessageId: context.waMessageId },
+    select: { instanceId: true, payload: true },
+  })
+  if (!inbound) return null
+
+  const base64 = await fetchEvolutionMediaBase64(inbound.instanceId, inbound.payload as { key?: unknown; message?: unknown })
+  if (!base64) return null
+
+  const mediaInfo = mediaInfoFromPayload(inbound.payload)
+  const saved = await saveBase64Attachment({
+    companyId: context.companyId,
+    conversationId: context.conversationId,
+    fileName: mediaInfo.fileName || context.fileName,
+    mimeType: mediaInfo.mimeType,
+    base64,
   })
 
   return resolveExistingFile(saved.storagePath, saved.mimeType)
@@ -152,11 +210,15 @@ router.get("/*path", async (req: Request, res: Response) => {
     resolved = await repairMissingAttachmentFile(attachment)
   }
   if (!resolved) {
+    resolved = await repairMissingFileFromRequest(normalizedPath)
+  }
+  if (!resolved) {
     return res.status(404).json({ error: "Arquivo não encontrado" })
   }
   const { absolutePath, stat } = resolved
 
-  const mimeType = attachment?.mimeType ?? "application/octet-stream"
+  const inferredContext = uploadRequestContext(normalizedPath)
+  const mimeType = attachment?.mimeType ?? (inferredContext?.fileName.startsWith("audio-") ? "audio/ogg" : "application/octet-stream")
   const fileName = attachment?.fileName ?? path.basename(absolutePath)
   const range = parseRange(req.headers.range, stat.size)
   const dispositionMode = req.query.download === "1" ? "attachment" : "inline"
