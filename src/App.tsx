@@ -50,6 +50,7 @@ import {
   MoreHorizontal,
   PanelLeft,
   Paperclip,
+  Pause,
   Phone,
   Plus,
   PlayCircle,
@@ -713,6 +714,162 @@ function CustomerAvatar({ customer, className = "size-10" }: { customer: ConvSum
   )
 }
 
+function formatAudioTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00"
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins}:${String(secs).padStart(2, "0")}`
+}
+
+function ChatAudioPlayer({ attachment, outgoing }: { attachment: MessageAttachment; outgoing?: boolean }) {
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const objectUrlRef = useRef<string | null>(null)
+  const [src, setSrc] = useState(attachment.url || attachment.externalUrl || "")
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+  const [playing, setPlaying] = useState(false)
+  const [duration, setDuration] = useState(0)
+  const [currentTime, setCurrentTime] = useState(0)
+
+  useEffect(() => {
+    const url = attachment.url || attachment.externalUrl || ""
+    setSrc(url)
+    setError("")
+    setPlaying(false)
+    setCurrentTime(0)
+    setDuration(0)
+
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current)
+      objectUrlRef.current = null
+    }
+  }, [attachment.id, attachment.url, attachment.externalUrl])
+
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+    }
+  }, [])
+
+  async function ensureBlobSource() {
+    if (!src || src.startsWith("blob:") || objectUrlRef.current) return src
+
+    setLoading(true)
+    setError("")
+    try {
+      const response = await fetch(src)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const blob = await response.blob()
+      const blobUrl = URL.createObjectURL(blob)
+      objectUrlRef.current = blobUrl
+      setSrc(blobUrl)
+      return blobUrl
+    } catch {
+      setError("Não foi possível carregar este áudio.")
+      return null
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function togglePlayback() {
+    const audio = audioRef.current
+    if (!audio || loading) return
+
+    if (playing) {
+      audio.pause()
+      return
+    }
+
+    const playableSrc = await ensureBlobSource()
+    if (!playableSrc) return
+
+    window.setTimeout(() => {
+      audioRef.current?.play().catch(() => setError("O navegador não conseguiu reproduzir este áudio."))
+    }, 0)
+  }
+
+  function seek(value: string) {
+    const audio = audioRef.current
+    if (!audio) return
+    const next = Number(value)
+    audio.currentTime = next
+    setCurrentTime(next)
+  }
+
+  const progressMax = duration > 0 ? duration : 1
+  const downloadHref = attachment.url
+    ? `${attachment.url}${attachment.url.includes("?") ? "&" : "?"}download=1`
+    : attachment.externalUrl ?? "#"
+
+  return (
+    <div className={cn(
+      "min-w-[260px] rounded-lg border p-2.5 shadow-sm",
+      outgoing ? "border-white/25 bg-white/15 text-primary-foreground" : "border-slate-200 bg-white text-slate-900",
+    )}>
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration || 0)}
+        onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onError={() => setError("Áudio indisponível ou em formato inválido.")}
+        className="hidden"
+      />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={togglePlayback}
+          disabled={loading}
+          className={cn(
+            "flex size-9 shrink-0 items-center justify-center rounded-full transition-colors",
+            outgoing ? "bg-white/20 hover:bg-white/30" : "bg-sky-50 text-sky-700 hover:bg-sky-100",
+            loading && "opacity-60",
+          )}
+          aria-label={playing ? "Pausar áudio" : "Reproduzir áudio"}
+        >
+          {playing ? <Pause className="size-4" /> : <PlayCircle className="size-4" />}
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex items-center gap-2 text-xs">
+            <span className="flex min-w-0 items-center gap-1.5 font-medium">
+              <Volume2 className="size-3.5 shrink-0" />
+              <span className="truncate">{attachment.fileName}</span>
+            </span>
+            <a
+              href={downloadHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn("ml-auto rounded p-1 transition-colors", outgoing ? "hover:bg-white/20" : "hover:bg-muted")}
+              aria-label="Abrir áudio em nova aba"
+            >
+              <Download className="size-3.5" />
+            </a>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-9 text-[11px] tabular-nums opacity-75">{formatAudioTime(currentTime)}</span>
+            <input
+              type="range"
+              min={0}
+              max={progressMax}
+              step={0.1}
+              value={Math.min(currentTime, progressMax)}
+              onChange={(event) => seek(event.target.value)}
+              className="h-1 flex-1 accent-sky-600"
+            />
+            <span className="w-9 text-right text-[11px] tabular-nums opacity-75">{formatAudioTime(duration)}</span>
+          </div>
+        </div>
+      </div>
+      {error && <p className={cn("mt-2 text-xs", outgoing ? "text-white/80" : "text-red-600")}>{error}</p>}
+      {loading && <p className={cn("mt-2 text-xs", outgoing ? "text-white/70" : "text-muted-foreground")}>Carregando áudio...</p>}
+    </div>
+  )
+}
+
 function MessageAttachments({ attachments, outgoing }: { attachments?: MessageAttachment[]; outgoing?: boolean }) {
   if (!attachments || attachments.length === 0) return null
 
@@ -733,15 +890,7 @@ function MessageAttachments({ attachments, outgoing }: { attachments?: MessageAt
           )
         }
         if (attachment.type === "AUDIO") {
-          return (
-            <div key={attachment.id} className="rounded-md border bg-white/70 p-2">
-              <div className="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Volume2 className="size-3.5" />
-                {attachment.fileName}
-              </div>
-              <audio controls src={href} className="h-9 w-full" />
-            </div>
-          )
+          return <ChatAudioPlayer key={attachment.id} attachment={attachment} outgoing={outgoing} />
         }
         return (
           <a
