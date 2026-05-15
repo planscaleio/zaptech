@@ -1,6 +1,7 @@
 import { ImapFlow } from "imapflow"
 import nodemailer from "nodemailer"
 import { simpleParser } from "mailparser"
+import { htmlToText } from "html-to-text"
 import { db } from "../db.js"
 import { decryptEmailSecret } from "./email-crypto.js"
 import { resolveAttendant, assignConversation } from "./distributionEngine.js"
@@ -26,17 +27,21 @@ type EmailAccountRecord = {
 
 const MAX_MESSAGES_PER_SYNC = 25
 
-function htmlToText(html: string) {
-  return html
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
+function htmlToCleanText(html: string) {
+  return htmlToText(html, {
+    wordwrap: false,
+    selectors: [
+      { selector: "a", options: { hideLinkHrefIfSameAsText: true } },
+      { selector: "img", format: "skip" },
+      { selector: "style", format: "skip" },
+      { selector: "script", format: "skip" },
+      { selector: "table", options: { cellPadding: " " } },
+    ],
+  }).replace(/\n{3,}/g, "\n\n").trim()
 }
 
 function textFromParsed(parsed: Awaited<ReturnType<typeof simpleParser>>) {
-  return (parsed.text || (typeof parsed.html === "string" ? htmlToText(parsed.html) : "") || "(E-mail sem corpo)").trim()
+  return (parsed.text || (typeof parsed.html === "string" ? htmlToCleanText(parsed.html) : "") || "(E-mail sem corpo)").trim()
 }
 
 export function publicEmailAccountSelect() {
