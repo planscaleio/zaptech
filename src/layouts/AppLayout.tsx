@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Outlet, NavLink, useLocation, Navigate } from "react-router-dom"
 import { useAuth } from "@/hooks/useAuth"
-import { useUnreadCount } from "@/hooks/useUnreadCount"
+import { useUnreadCount, useEmailUnreadCount } from "@/hooks/useUnreadCount"
 import { clearStoredAuth, redirectToLogin } from "@/lib/auth"
 import { navItems, viewCopy, type ViewId } from "@/lib/nav"
 import {
@@ -116,9 +116,11 @@ function SidebarBrand() {
 function SidebarNavigation({
   currentId,
   unreadCount,
+  emailUnreadCount,
 }: {
   currentId: ViewId
   unreadCount: number
+  emailUnreadCount: number
 }) {
   const { open, setMobileOpen } = useSidebar()
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(getInitialNavGroupState)
@@ -162,7 +164,8 @@ function SidebarNavigation({
                 const item = itemById.get(id)
                 if (!item) return null
 
-                const showUnread = item.id === "atendimento" && unreadCount > 0
+                const badgeCount = item.id === "atendimento" ? unreadCount : item.id === "emails" ? emailUnreadCount : 0
+                const showBadge = badgeCount > 0
 
                 return (
                   <SidebarMenuItem key={item.id}>
@@ -178,12 +181,12 @@ function SidebarNavigation({
                       >
                         <item.icon className="size-4 shrink-0" />
                         {open && <span className="min-w-0 flex-1 truncate">{item.label}</span>}
-                        {showUnread && open && (
+                        {showBadge && open && (
                           <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-bold text-white">
-                            {unreadCount > 99 ? "99+" : unreadCount}
+                            {badgeCount > 99 ? "99+" : badgeCount}
                           </span>
                         )}
-                        {showUnread && !open && (
+                        {showBadge && !open && (
                           <span className="absolute right-2 top-1.5 size-1.5 rounded-full bg-amber-500" />
                         )}
                       </NavLink>
@@ -227,6 +230,7 @@ export default function AppLayout() {
   const auth = useAuth()
   const [agentsOpen, setAgentsOpen] = useState(false)
   const { count: unreadCount } = useUnreadCount()
+  const { count: emailUnreadCount } = useEmailUnreadCount()
   const location = useLocation()
 
   useEffect(() => {
@@ -275,7 +279,7 @@ export default function AppLayout() {
               <SidebarBrand />
             </SidebarHeader>
             <SidebarContent>
-              <SidebarNavigation currentId={currentId} unreadCount={unreadCount} />
+              <SidebarNavigation currentId={currentId} unreadCount={unreadCount} emailUnreadCount={emailUnreadCount} />
             </SidebarContent>
             <SidebarFooter>
               <SidebarPlanCard />

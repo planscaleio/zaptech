@@ -10,11 +10,33 @@ const router = Router()
 
 router.use(requireAuth)
 
-// GET /conversations/unread-count?companyId=  — must be before /:id routes
+// GET /conversations/unread-count?companyId=&channel=  — must be before /:id routes
 router.get("/unread-count", async (req: Request, res: Response) => {
-  const { companyId } = req.query
+  const { companyId, channel } = req.query
   if (!companyId || typeof companyId !== "string")
     return res.status(400).json({ error: "companyId é obrigatório" })
+
+  const allowedChannels = ["WHATSAPP", "INSTAGRAM", "SITE", "EMAIL", "TELEFONE", "WEBHOOK"] as const
+  const channelFilter = channel && typeof channel === "string" && (allowedChannels as readonly string[]).includes(channel)
+    ? String(channel)
+    : null
+
+  if (channelFilter) {
+    const result = await db.$queryRaw<{ count: bigint }[]>`
+      SELECT COUNT(*)::int AS count
+      FROM "Conversation" c
+      WHERE c."companyId" = ${companyId}
+        AND c."channel" = ${channelFilter}
+        AND c.status NOT IN ('ARQUIVADO', 'PARA_EXCLUIR', 'ENCERRADO', 'RESOLVIDO')
+        AND EXISTS (
+          SELECT 1 FROM "Message" m
+          WHERE m."conversationId" = c.id
+            AND m.role = 'CLIENTE'
+            AND m."createdAt" > COALESCE(c."lastReadAt", '1970-01-01'::timestamptz)
+        )
+    `
+    return res.json({ count: Number(result[0]?.count ?? 0) })
+  }
 
   const result = await db.$queryRaw<{ count: bigint }[]>`
     SELECT COUNT(*)::int AS count
@@ -84,6 +106,7 @@ router.get("/", async (req: Request, res: Response) => {
       tone: true,
       attendantId: true,
       teamId: true,
+      lastReadAt: true,
       customer: {
         select: { id: true, name: true, phone: true, email: true, status: true, aiScore: true, isVip: true },
       },
@@ -93,9 +116,26 @@ router.get("/", async (req: Request, res: Response) => {
     },
   })
 
+  const convIds = conversations.map((c) => c.id)
+  const unreadRows = convIds.length > 0
+    ? await db.$queryRaw<{ id: string }[]>`
+        SELECT c.id
+        FROM "Conversation" c
+        WHERE c.id = ANY(${convIds}::text[])
+          AND EXISTS (
+            SELECT 1 FROM "Message" m
+            WHERE m."conversationId" = c.id
+              AND m.role = 'CLIENTE'
+              AND m."createdAt" > COALESCE(c."lastReadAt", '1970-01-01'::timestamptz)
+          )
+      `
+    : []
+  const unreadSet = new Set(unreadRows.map((r) => r.id))
+
   return res.json(conversations.map((c) => ({
     ...c,
     tags: c.tags.map((t) => t.tag),
+    hasUnread: unreadSet.has(c.id),
   })))
 })
 

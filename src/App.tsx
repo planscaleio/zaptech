@@ -561,6 +561,7 @@ interface ConvSummary {
   nextAction: string | null
   attendantId: string | null
   teamId: string | null
+  hasUnread: boolean
   tags: { id: string; name: string; color: string }[]
   customer: { id: string; name: string; phone: string | null; email?: string | null; status: string; aiScore: number | null; isVip: boolean; avatarUrl?: string | null }
 }
@@ -1004,6 +1005,10 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   const [transferSearch, setTransferSearch] = useState("")
   const [transferLoading, setTransferLoading] = useState(false)
 
+  // Inline edit: valor potencial do cliente
+  const [editingPotentialValue, setEditingPotentialValue] = useState(false)
+  const [potentialValueInput, setPotentialValueInput] = useState("")
+
   // Tags currently applied on the selected conversation (derived + writable)
   const appliedTagNames = useMemo(
     () => new Set((selected?.tags ?? []).map((t) => t.name)),
@@ -1164,7 +1169,8 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
               d.id === prev[i]?.id &&
               d.lastMessageAt === prev[i]?.lastMessageAt &&
               d.preview === prev[i]?.preview &&
-              d.status === prev[i]?.status
+              d.status === prev[i]?.status &&
+              d.hasUnread === prev[i]?.hasUnread
             )
           ) {
             return prev
@@ -2167,6 +2173,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                       className={cn(
                         "group relative w-full cursor-pointer rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors hover:bg-muted/45",
                         selectedConv && "border-primary/30 bg-primary/5",
+                        conv.hasUnread && !selectedConv && "border-l-2 border-l-amber-500 bg-amber-50/30",
                         conv.status === "PARA_EXCLUIR" && "border-red-200 bg-red-50/40",
                         conv.customer.isVip && !selectedConv && "bg-amber-50/25",
                       )}
@@ -2176,6 +2183,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5">
+                              {conv.hasUnread && !selectedConv && <span className="size-1.5 shrink-0 rounded-full bg-amber-500" />}
                               <p className="min-w-0 truncate text-xs font-semibold">{conv.customer.name}</p>
                               {conv.customer.isVip && <Crown className="size-3 shrink-0 text-amber-500" />}
                             </div>
@@ -3755,8 +3763,52 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
               <CardDescription>Sinais unificados do relacionamento</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 p-3 pt-0">
+              <div className="flex items-center justify-between border-b pb-2">
+                <span className="text-sm text-muted-foreground">Valor potencial</span>
+                {editingPotentialValue ? (
+                  <input
+                    autoFocus
+                    type="text"
+                    value={potentialValueInput}
+                    onChange={(e) => setPotentialValueInput(e.target.value)}
+                    onBlur={async () => {
+                      setEditingPotentialValue(false)
+                      if (!customer?.id) return
+                      const parsed = parseCurrencyValue(potentialValueInput)
+                      const newValue = parsed !== null ? String(parsed) : null
+                      await fetch(`/api/customers/${customer.id}`, {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ value: newValue }),
+                      })
+                      setSelected((prev) =>
+                        prev ? { ...prev, customer: { ...prev.customer, value: newValue } } : prev
+                      )
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur()
+                      if (e.key === "Escape") {
+                        setEditingPotentialValue(false)
+                        setPotentialValueInput("")
+                      }
+                    }}
+                    className="w-32 rounded border px-1.5 py-0.5 text-right text-sm font-medium focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                ) : (
+                  <button
+                    onClick={() => {
+                      const current = parseCurrencyValue(customer?.value)
+                      setPotentialValueInput(current !== null ? String(current) : "")
+                      setEditingPotentialValue(true)
+                    }}
+                    title="Clique para editar"
+                    className="rounded px-1 text-sm font-medium hover:bg-muted"
+                  >
+                    {formatCurrency(customer?.value)}
+                  </button>
+                )}
+              </div>
               {[
-                ["Valor potencial", formatCurrency(customer?.value)],
                 ["Etapa", customer?.stage ?? "—"],
                 ["Origem", customer?.source ?? "—"],
                 ["Sentimento", customer?.aiSentiment ?? "—"],
