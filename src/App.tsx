@@ -1758,10 +1758,10 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
     setTransferLoading(true)
     setTransferOpen(true)
     Promise.all([
-      fetch(`/api/settings/users?companyId=${companyId}`, { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`/api/settings/users?companyId=${companyId}`)
         .then((r) => r.json())
         .then((d) => (Array.isArray(d) ? d : [])),
-      fetch(`/api/teams?companyId=${companyId}`, { headers: { Authorization: `Bearer ${token}` } })
+      fetch(`/api/teams?companyId=${companyId}`)
         .then((r) => r.json())
         .then((d) => Array.isArray(d) ? d : d.teams ?? []),
     ]).then(([users, teams]) => {
