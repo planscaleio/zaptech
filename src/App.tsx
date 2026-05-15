@@ -720,9 +720,10 @@ function MessageAttachments({ attachments, outgoing }: { attachments?: MessageAt
     <div className="mt-2 space-y-2">
       {attachments.map((attachment) => {
         const href = attachment.url || attachment.externalUrl || "#"
+        const openHref = href === "#" ? href : `${href}${href.includes("?") ? "&" : "?"}download=1`
         if (attachment.type === "IMAGE") {
           return (
-            <a key={attachment.id} href={href} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-md border bg-white/70">
+            <a key={attachment.id} href={href} target="_blank" rel="noopener noreferrer" className="block overflow-hidden rounded-md border bg-white/70">
               <img src={href} alt={attachment.fileName} className="max-h-72 w-full object-contain" />
               <span className={cn("flex items-center gap-1.5 px-2 py-1.5 text-xs", outgoing ? "text-primary-foreground/85" : "text-muted-foreground")}>
                 <ImageIcon className="size-3.5" />
@@ -745,9 +746,9 @@ function MessageAttachments({ attachments, outgoing }: { attachments?: MessageAt
         return (
           <a
             key={attachment.id}
-            href={href}
+            href={openHref}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className={cn(
               "flex items-center gap-2 rounded-md border bg-white/70 p-2 text-sm transition-colors hover:bg-white",
               outgoing ? "text-slate-900" : "text-foreground",

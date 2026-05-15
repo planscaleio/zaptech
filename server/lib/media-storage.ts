@@ -27,6 +27,26 @@ const ALLOWED_MIME_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ])
 
+const MIME_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+  "image/gif": ".gif",
+  "audio/mpeg": ".mp3",
+  "audio/mp3": ".mp3",
+  "audio/mp4": ".m4a",
+  "audio/aac": ".aac",
+  "audio/ogg": ".ogg",
+  "audio/opus": ".opus",
+  "audio/webm": ".webm",
+  "application/pdf": ".pdf",
+  "text/plain": ".txt",
+  "application/msword": ".doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "application/vnd.ms-excel": ".xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+}
+
 export function attachmentKindFromMime(mimeType: string): AttachmentKind {
   if (mimeType.startsWith("image/")) return "IMAGE"
   if (mimeType.startsWith("audio/")) return "AUDIO"
@@ -49,7 +69,7 @@ export function assertAllowedUpload(mimeType: string, size: number) {
   }
 }
 
-function safeFileName(fileName: string) {
+function safeFileName(fileName: string, mimeType?: string) {
   const parsed = path.parse(fileName)
   const base = parsed.name
     .normalize("NFD")
@@ -57,17 +77,18 @@ function safeFileName(fileName: string) {
     .replace(/[^a-zA-Z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80) || "arquivo"
-  const ext = parsed.ext.replace(/[^a-zA-Z0-9.]/g, "").slice(0, 12)
+  const fallbackExt = mimeType ? MIME_EXTENSIONS[mimeType] ?? "" : ""
+  const ext = (parsed.ext || fallbackExt).replace(/[^a-zA-Z0-9.]/g, "").slice(0, 12)
   return `${base}${ext}`
 }
 
-function relativeUploadPath(companyId: string, conversationId: string, fileName: string) {
+function relativeUploadPath(companyId: string, conversationId: string, fileName: string, mimeType?: string) {
   const date = new Date().toISOString().slice(0, 10)
-  return path.join("conversations", companyId, conversationId, date, `${crypto.randomUUID()}-${safeFileName(fileName)}`)
+  return path.join("conversations", companyId, conversationId, date, `${crypto.randomUUID()}-${safeFileName(fileName, mimeType)}`)
 }
 
 export function uploadUrlFromRelativePath(relativePath: string) {
-  return `/uploads/${relativePath.split(path.sep).join("/")}`
+  return `/uploads/${relativePath.split(path.sep).map(encodeURIComponent).join("/")}`
 }
 
 export function absoluteUploadPath(relativePath: string) {
@@ -84,14 +105,14 @@ export async function saveBase64Attachment(opts: {
   const buffer = Buffer.from(opts.base64.replace(/^data:[^;]+;base64,/, ""), "base64")
   assertAllowedUpload(opts.mimeType, buffer.byteLength)
 
-  const relativePath = relativeUploadPath(opts.companyId, opts.conversationId, opts.fileName)
+  const relativePath = relativeUploadPath(opts.companyId, opts.conversationId, opts.fileName, opts.mimeType)
   const absolutePath = absoluteUploadPath(relativePath)
   await fs.mkdir(path.dirname(absolutePath), { recursive: true })
   await fs.writeFile(absolutePath, buffer)
 
   return {
     type: attachmentKindFromMime(opts.mimeType),
-    fileName: safeFileName(opts.fileName),
+    fileName: safeFileName(opts.fileName, opts.mimeType),
     mimeType: opts.mimeType,
     size: buffer.byteLength,
     storagePath: relativePath,
@@ -113,14 +134,14 @@ export async function saveRemoteAttachment(opts: {
     throw new Error("Mídia recebida acima do limite de 10MB.")
   }
 
-  const relativePath = relativeUploadPath(opts.companyId, opts.conversationId, opts.fileName)
+  const relativePath = relativeUploadPath(opts.companyId, opts.conversationId, opts.fileName, opts.mimeType)
   const absolutePath = absoluteUploadPath(relativePath)
   await fs.mkdir(path.dirname(absolutePath), { recursive: true })
   await fs.writeFile(absolutePath, buffer)
 
   return {
     type: attachmentKindFromMime(opts.mimeType),
-    fileName: safeFileName(opts.fileName),
+    fileName: safeFileName(opts.fileName, opts.mimeType),
     mimeType: opts.mimeType,
     size: buffer.byteLength,
     storagePath: relativePath,

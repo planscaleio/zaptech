@@ -22,6 +22,7 @@ import auditoriasRouter from "./routes/auditorias.js"
 import settingsRouter from "./routes/settings.js"
 import agentsRouter from "./routes/agents.js"
 import adminRouter from "./routes/admin.js"
+import uploadsRouter from "./routes/uploads.js"
 import { Router } from "express"
 import { db } from "./db.js"
 import { startWorkers, runSegmentSync, runCardScore, runStageSync, runAiScore, runInboundProcessor, runOutboundSender, runOutboundRecovery, runAssignmentRecovery, runEmailSync } from "./workers/index.js"
@@ -51,7 +52,7 @@ app.get("/health", (_req, res) => {
 // Webhook e links públicos — fora do prefixo /api
 app.use("/webhook/evolution", evolutionWebhook)
 app.use("/r", publicDynamicRedirectRouter)
-app.use("/uploads", express.static(path.resolve(process.cwd(), process.env.MEDIA_UPLOAD_DIR ?? "uploads")))
+app.use("/uploads", uploadsRouter)
 
 // ─── API routes (prefixo /api) ────────────────────────────────────────────────
 
