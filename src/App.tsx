@@ -3782,7 +3782,10 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                         body: JSON.stringify({ value: newValue }),
                       })
                       setSelected((prev) =>
-                        prev ? { ...prev, customer: { ...prev.customer, value: newValue } } : prev
+                        prev ? { ...prev, leadValue: newValue, customer: { ...prev.customer, value: newValue } } : prev
+                      )
+                      setConvList((prev) =>
+                        prev.map((c) => c.id === selectedId ? { ...c, leadValue: newValue } : c)
                       )
                     }}
                     onKeyDown={(e) => {

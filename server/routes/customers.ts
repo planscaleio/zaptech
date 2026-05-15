@@ -225,6 +225,17 @@ router.patch("/:id", async (req: Request, res: Response) => {
     data,
     select: { id: true, name: true, status: true, stage: true, isVip: true },
   })
+
+  if ("value" in data) {
+    await db.conversation.updateMany({
+      where: {
+        customerId: req.params.id,
+        status: { notIn: ["ENCERRADO", "ARQUIVADO", "PARA_EXCLUIR"] },
+      },
+      data: { leadValue: data.value == null ? null : Number(data.value) },
+    })
+  }
+
   return res.json(customer)
 })
 
