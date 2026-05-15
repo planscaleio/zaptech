@@ -129,8 +129,8 @@ api.post("/workers/trigger", async (req: Request, res: Response) => {
     switch (worker) {
       case "inbound-processor":  runId = await runInboundProcessor("manual", ctx);  break
       case "repair-inbound-media": {
-        const repaired = await repairInboundMedia(ctx)
-        return res.json({ repaired })
+        const result = await repairInboundMedia(ctx)
+        return res.json(result)
       }
       case "outbound-sender":    runId = await runOutboundSender("manual", ctx);    break
       case "outbound-recovery":  runId = await runOutboundRecovery("manual", ctx);  break

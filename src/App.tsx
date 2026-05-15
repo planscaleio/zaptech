@@ -764,8 +764,9 @@ function ChatAudioPlayer({ attachment, outgoing }: { attachment: MessageAttachme
       objectUrlRef.current = blobUrl
       setSrc(blobUrl)
       return blobUrl
-    } catch {
-      setError("Não foi possível carregar este áudio.")
+    } catch (err) {
+      const detail = err instanceof Error && err.message.startsWith("HTTP ") ? ` (${err.message})` : ""
+      setError(`Não foi possível carregar este áudio${detail}.`)
       return null
     } finally {
       setLoading(false)
