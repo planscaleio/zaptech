@@ -12,11 +12,10 @@ import { runWorker, type WorkerContext } from "./runner.js"
 import { jidToPhone, extractText, mediaPlaceholder, calcNextAttempt } from "../utils/evolution.js"
 import { resolveAttendant, assignConversation } from "../lib/distributionEngine.js"
 import { attachmentKindFromMime, saveBase64Attachment, saveRemoteAttachment } from "../lib/media-storage.js"
+import { fetchEvolutionMediaBase64 } from "../lib/evolution-media.js"
 
 const BATCH_SIZE   = 50
 const MAX_ATTEMPTS = 5
-const EVOLUTION_BASE = process.env.EVOLUTION_BASE_URL ?? "http://localhost:8080"
-const EVOLUTION_KEY  = process.env.EVOLUTION_API_KEY  ?? ""
 
 const TEXT_TYPES = new Set(["conversation", "extendedTextMessage"])
 
@@ -65,34 +64,6 @@ function extractMediaAttachment(msg: EvoMessage, msgType: string) {
       media,
     },
   }
-}
-
-async function fetchEvolutionMediaBase64(instanceId: string, msg: EvoMessage): Promise<string | null> {
-  if (!EVOLUTION_KEY) return null
-
-  const bodies = [
-    { message: msg, convertToMp4: false },
-    { key: msg.key, message: msg.message, convertToMp4: false },
-  ]
-
-  for (const body of bodies) {
-    try {
-      const response = await fetch(`${EVOLUTION_BASE}/chat/getBase64FromMediaMessage/${instanceId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", apikey: EVOLUTION_KEY },
-        body: JSON.stringify(body),
-      })
-      if (!response.ok) continue
-      const data = await response.json() as { base64?: string }
-      if (typeof data.base64 === "string" && data.base64.trim()) {
-        return data.base64
-      }
-    } catch {
-      // Try the next body shape, then fallback to direct URL download.
-    }
-  }
-
-  return null
 }
 
 async function processInbound(inbound: {
