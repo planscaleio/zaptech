@@ -4,8 +4,11 @@ import { resolveAttendant, assignConversation } from "../lib/distributionEngine.
 import { sendEmailReply } from "../lib/email-service.js"
 import { saveBase64Attachment } from "../lib/media-storage.js"
 import { resolveEvolutionInstanceId } from "../lib/evolution-instance.js"
+import { requireAuth } from "../middleware/auth.js"
 
 const router = Router()
+
+router.use(requireAuth)
 
 // GET /conversations/unread-count?companyId=  — must be before /:id routes
 router.get("/unread-count", async (req: Request, res: Response) => {
@@ -41,8 +44,31 @@ router.get("/", async (req: Request, res: Response) => {
   }
   const requestedChannel = channel ? channel as ChannelParam : null
 
+  // Visibility filter based on user role
+  const currentUser = req.user
+  const isManager = currentUser?.type === "user" && ["OWNER", "ADMIN", "GESTOR"].includes(currentUser.role ?? "")
+
+  let visibilityFilter: Record<string, unknown> = {}
+  if (!isManager && currentUser?.sub) {
+    const userTeamIds = await db.salesTeamMember.findMany({
+      where: { userId: currentUser.sub },
+      select: { teamId: true },
+    }).then((r) => r.map((m) => m.teamId))
+
+    visibilityFilter = {
+      OR: [
+        { attendantId: currentUser.sub },
+        { attendantId: null, teamId: { in: userTeamIds.length > 0 ? userTeamIds : ["__none__"] } },
+      ],
+    }
+  }
+
   const conversations = await db.conversation.findMany({
-    where: { companyId, ...(requestedChannel ? { channel: requestedChannel } : {}) },
+    where: {
+      companyId,
+      ...(requestedChannel ? { channel: requestedChannel } : {}),
+      ...visibilityFilter,
+    },
     orderBy: { lastMessageAt: "desc" },
     take: 50,
     select: {
@@ -56,6 +82,8 @@ router.get("/", async (req: Request, res: Response) => {
       aiReason: true,
       nextAction: true,
       tone: true,
+      attendantId: true,
+      teamId: true,
       customer: {
         select: { id: true, name: true, phone: true, email: true, status: true, aiScore: true, isVip: true },
       },
@@ -87,6 +115,8 @@ router.get("/:id/messages", async (req: Request, res: Response) => {
       aiReason: true,
       nextAction: true,
       tone: true,
+      attendantId: true,
+      teamId: true,
       customer: {
         select: {
           id: true,
@@ -405,17 +435,24 @@ router.post("/:id/assign", async (req: Request, res: Response) => {
 
   const { userId } = req.body ?? {}
   let targetUserId: string | null = userId ?? null
+  let targetTeamId: string | null = null
 
   if (!targetUserId) {
-    targetUserId = await resolveAttendant(conv.id, conv.companyId)
+    const resolution = await resolveAttendant(conv.id, conv.companyId)
+    targetUserId = resolution.userId
+    targetTeamId = resolution.teamId
   }
 
   if (!targetUserId || targetUserId === "__EXISTING_OWNER__") {
-    return res.json({ ok: true, attendantId: null, message: "Sem atendente disponível — conversa na fila" })
+    // If no attendant but a team was resolved, set teamId on conversation
+    if (targetTeamId) {
+      await db.conversation.update({ where: { id: conv.id }, data: { teamId: targetTeamId } })
+    }
+    return res.json({ ok: true, attendantId: null, teamId: targetTeamId, message: "Sem atendente disponível — conversa na fila" })
   }
 
-  await assignConversation(conv.id, targetUserId, conv.companyId)
-  return res.json({ ok: true, attendantId: targetUserId })
+  await assignConversation(conv.id, targetUserId, conv.companyId, targetTeamId)
+  return res.json({ ok: true, attendantId: targetUserId, teamId: targetTeamId })
 })
 
 // POST /conversations/:id/transfer  { mode, targetId, note?, authorName? }
@@ -459,7 +496,7 @@ router.post("/:id/transfer", async (req: Request, res: Response) => {
   if (mode === "user") {
     await assignConversation(conv.id, resolvedUserId!, conv.companyId)
   } else {
-    await db.conversation.update({ where: { id: conv.id }, data: { attendantId: null } })
+    await db.conversation.update({ where: { id: conv.id }, data: { attendantId: null, teamId: targetId } })
   }
 
   // System message (internal note)

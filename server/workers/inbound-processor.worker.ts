@@ -217,9 +217,11 @@ async function processInbound(inbound: {
       select: { attendantId: true },
     })
     if (!convWithAttendant?.attendantId) {
-      const targetUserId = await resolveAttendant(convId, inbound.companyId)
-      if (targetUserId && targetUserId !== "__EXISTING_OWNER__") {
-        await assignConversation(convId, targetUserId, inbound.companyId)
+      const resolution = await resolveAttendant(convId, inbound.companyId)
+      if (resolution.userId && resolution.userId !== "__EXISTING_OWNER__") {
+        await assignConversation(convId, resolution.userId, inbound.companyId, resolution.teamId)
+      } else if (resolution.teamId) {
+        await db.conversation.update({ where: { id: convId }, data: { teamId: resolution.teamId } })
       }
     }
   }

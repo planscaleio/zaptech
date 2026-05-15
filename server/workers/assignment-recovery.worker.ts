@@ -52,15 +52,20 @@ export async function runAssignmentRecovery(
 
     for (const conv of stale) {
       try {
-        const newUserId = await resolveAttendant(
+        const resolution = await resolveAttendant(
           conv.id,
           conv.companyId,
           conv.attendantId ?? undefined,
         )
 
-        if (newUserId && newUserId !== "__EXISTING_OWNER__") {
-          await assignConversation(conv.id, newUserId, conv.companyId)
-          await handle.log("info", `Reatribuída conversa ${conv.id} → atendente ${newUserId}`, {
+        if (resolution.userId && resolution.userId !== "__EXISTING_OWNER__") {
+          await assignConversation(conv.id, resolution.userId, conv.companyId, resolution.teamId)
+          await handle.log("info", `Reatribuída conversa ${conv.id} → atendente ${resolution.userId}`, {
+            itemId: conv.id,
+          })
+        } else if (resolution.teamId) {
+          await db.conversation.update({ where: { id: conv.id }, data: { teamId: resolution.teamId } })
+          await handle.log("info", `Conversa ${conv.id} direcionada para fila do time ${resolution.teamId}`, {
             itemId: conv.id,
           })
         } else {

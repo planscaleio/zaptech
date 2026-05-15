@@ -278,9 +278,11 @@ async function importEmailMessage(account: EmailAccountRecord, msg: { uid: numbe
   })
 
   if (result.isNew) {
-    const targetUserId = await resolveAttendant(result.conversationId, account.companyId)
-    if (targetUserId && targetUserId !== "__EXISTING_OWNER__") {
-      await assignConversation(result.conversationId, targetUserId, account.companyId)
+    const resolution = await resolveAttendant(result.conversationId, account.companyId)
+    if (resolution.userId && resolution.userId !== "__EXISTING_OWNER__") {
+      await assignConversation(result.conversationId, resolution.userId, account.companyId, resolution.teamId)
+    } else if (resolution.teamId) {
+      await db.conversation.update({ where: { id: result.conversationId }, data: { teamId: resolution.teamId } })
     }
   }
 

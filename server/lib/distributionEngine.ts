@@ -16,11 +16,16 @@ type RuleCondition = {
   value: string | number | boolean
 }
 
+export type AttendantResolution = {
+  userId: string | null
+  teamId: string | null
+}
+
 export async function resolveAttendant(
   conversationId: string,
   companyId: string,
   excludeUserId?: string,
-): Promise<string | null> {
+): Promise<AttendantResolution> {
   // Load conversation with all data needed for condition evaluation
   const conv = await db.conversation.findUnique({
     where: { id: conversationId },
@@ -52,7 +57,7 @@ export async function resolveAttendant(
     },
   })
 
-  if (!conv) return null
+  if (!conv) return { userId: null, teamId: null }
 
   // Load active rules for this company, ordered by priority
   const rules = await db.distributionRule.findMany({
@@ -83,15 +88,24 @@ export async function resolveAttendant(
     }
 
     // Rule matched — apply action
-    const userId = await applyAction(rule, companyId, excludeUserId)
-    if (userId) return userId
+    const result = await applyAction(rule, companyId, excludeUserId)
+    if (result.userId) {
+      return {
+        userId: result.userId,
+        teamId: rule.actionType === "TEAM" ? rule.targetTeamId : result.teamId ?? null,
+      }
+    }
 
     // Action returned null (e.g. MANUAL or no available member)
     if (rule.fallback === "NEXT_RULE") continue
-    return null // QUEUE
+    // Queue — if rule targets a team, return teamId so conversation lands in team queue
+    if (rule.actionType === "TEAM" && rule.targetTeamId) {
+      return { userId: null, teamId: rule.targetTeamId }
+    }
+    return { userId: null, teamId: null } // QUEUE
   }
 
-  return null
+  return { userId: null, teamId: null }
 }
 
 function evaluateCondition(
@@ -168,22 +182,20 @@ async function applyAction(
   },
   companyId: string,
   excludeUserId?: string,
-): Promise<string | null> {
+): Promise<{ userId: string | null; teamId: string | null }> {
   switch (rule.actionType) {
     case "SPECIFIC_USER":
-      if (!rule.targetUserId || rule.targetUserId === excludeUserId) return null
-      return rule.targetUserId
+      if (!rule.targetUserId || rule.targetUserId === excludeUserId) return { userId: null, teamId: null }
+      return { userId: rule.targetUserId, teamId: null }
 
     case "EXISTING_OWNER":
-      // Caller should have the conversation; engine can't resolve without the conv here
-      // Return a sentinel that the caller interprets
-      return "__EXISTING_OWNER__"
+      return { userId: "__EXISTING_OWNER__", teamId: null }
 
     case "QUEUE":
-      return null
+      return { userId: null, teamId: rule.targetTeamId }
 
     case "TEAM": {
-      if (!rule.targetTeamId) return null
+      if (!rule.targetTeamId) return { userId: null, teamId: null }
 
       const members = await db.salesTeamMember.findMany({
         where: {
@@ -197,7 +209,7 @@ async function applyAction(
           : { leadCount: "asc" }, // round-robin fallback also picks lowest as proxy
       })
 
-      if (members.length === 0) return null
+      if (members.length === 0) return { userId: null, teamId: rule.targetTeamId }
 
       if (rule.strategy === "ROUND_ROBIN") {
         // Pick member who last received a lead the longest ago
@@ -212,29 +224,40 @@ async function applyAction(
           }),
         )
         withDates.sort((a, b) => a.lastAt.getTime() - b.lastAt.getTime())
-        return withDates[0].userId
+        return { userId: withDates[0].userId, teamId: rule.targetTeamId }
       }
 
       // LOWEST_LOAD — already sorted
-      return members[0].userId
+      return { userId: members[0].userId, teamId: rule.targetTeamId }
     }
 
     default:
-      return null
+      return { userId: null, teamId: null }
   }
 }
 
 /**
- * Assign a conversation to an attendant (updates attendantId + member leadCount).
+ * Assign a conversation to an attendant (updates attendantId + teamId + member leadCount).
  */
 export async function assignConversation(
   conversationId: string,
   userId: string,
   companyId: string,
+  teamId?: string | null,
 ): Promise<void> {
+  // If teamId not provided, look it up from the user's membership
+  let resolvedTeamId = teamId ?? null
+  if (!resolvedTeamId) {
+    const membership = await db.salesTeamMember.findFirst({
+      where: { userId, team: { companyId } },
+      select: { teamId: true },
+    })
+    resolvedTeamId = membership?.teamId ?? null
+  }
+
   await db.conversation.update({
     where: { id: conversationId },
-    data: { attendantId: userId },
+    data: { attendantId: userId, teamId: resolvedTeamId },
   })
 
   // Increment leadCount on the team member(s) for this user+company

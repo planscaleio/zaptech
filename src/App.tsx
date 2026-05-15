@@ -559,6 +559,8 @@ interface ConvSummary {
   leadValue: string | null
   aiReason: string | null
   nextAction: string | null
+  attendantId: string | null
+  teamId: string | null
   tags: { id: string; name: string; color: string }[]
   customer: { id: string; name: string; phone: string | null; email?: string | null; status: string; aiScore: number | null; isVip: boolean; avatarUrl?: string | null }
 }
@@ -1995,6 +1997,22 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
       .catch(() => {})
   }
 
+  function claimConversation(convId: string) {
+    if (!auth?.id) return
+    fetch(`/api/conversations/${convId}/assign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: auth.id }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.error) { alert(d.error); return }
+        setConvList((prev) => prev.map((c) => c.id === convId ? { ...c, attendantId: auth.id! } : c))
+        refreshActiveConversation(convId)
+      })
+      .catch(() => {})
+  }
+
   // Load all company tags when manual tag popover opens
   useEffect(() => {
     if (!manualTagOpen || !companyId) return
@@ -2191,6 +2209,14 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                             <span className="truncate rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">#{primaryTag.name}</span>
                           )}
                           {conv.tags.length > 1 && <span className="text-[9px] text-muted-foreground">+{conv.tags.length - 1}</span>}
+                          {!conv.attendantId && conv.teamId && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); claimConversation(conv.id) }}
+                              className="shrink-0 rounded bg-primary px-1.5 py-0.5 text-[9px] font-semibold text-white hover:bg-primary/90"
+                            >
+                              Assumir
+                            </button>
+                          )}
                           <span className={cn("ml-auto shrink-0 text-[10px]", selectedConv ? "font-semibold text-primary" : "text-muted-foreground")}>
                             {formatRelativeTime(conv.lastMessageAt)}
                           </span>
