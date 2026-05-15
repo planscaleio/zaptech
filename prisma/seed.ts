@@ -161,9 +161,14 @@ async function main() {
     console.log(`✓ Plan seeded: ${plan.name}`)
   }
 
-  await seedDemo(prisma)
+  if (process.env.SEED_DEMO === "true") {
+    await seedDemo(prisma)
+    console.log("✓ Conta demo seeded.")
+  } else {
+    console.log("⏭️ Conta demo ignorada. Use SEED_DEMO=true para recriá-la intencionalmente.")
+  }
 
-  console.log("✓ Planos e conta demo seeded.")
+  console.log("✓ Configuração base e planos seeded.")
   console.log("\n🌱 Seed concluído.")
 }
 

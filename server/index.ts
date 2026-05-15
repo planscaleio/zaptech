@@ -25,7 +25,7 @@ import adminRouter from "./routes/admin.js"
 import uploadsRouter from "./routes/uploads.js"
 import { Router } from "express"
 import { db } from "./db.js"
-import { startWorkers, runSegmentSync, runCardScore, runStageSync, runAiScore, runInboundProcessor, runOutboundSender, runOutboundRecovery, runAssignmentRecovery, runEmailSync } from "./workers/index.js"
+import { startWorkers, runSegmentSync, runCardScore, runStageSync, runAiScore, runInboundProcessor, repairInboundMedia, runOutboundSender, runOutboundRecovery, runAssignmentRecovery, runEmailSync } from "./workers/index.js"
 
 const app = express()
 const api = Router()
@@ -128,6 +128,10 @@ api.post("/workers/trigger", async (req: Request, res: Response) => {
   try {
     switch (worker) {
       case "inbound-processor":  runId = await runInboundProcessor("manual", ctx);  break
+      case "repair-inbound-media": {
+        const repaired = await repairInboundMedia(ctx)
+        return res.json({ repaired })
+      }
       case "outbound-sender":    runId = await runOutboundSender("manual", ctx);    break
       case "outbound-recovery":  runId = await runOutboundRecovery("manual", ctx);  break
       case "email-sync":         runId = await runEmailSync("manual", ctx);         break

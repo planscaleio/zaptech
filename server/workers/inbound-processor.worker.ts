@@ -11,10 +11,12 @@ import { db } from "../db.js"
 import { runWorker, type WorkerContext } from "./runner.js"
 import { jidToPhone, extractText, mediaPlaceholder, calcNextAttempt } from "../utils/evolution.js"
 import { resolveAttendant, assignConversation } from "../lib/distributionEngine.js"
-import { attachmentKindFromMime, saveRemoteAttachment } from "../lib/media-storage.js"
+import { attachmentKindFromMime, saveBase64Attachment, saveRemoteAttachment } from "../lib/media-storage.js"
 
 const BATCH_SIZE   = 50
 const MAX_ATTEMPTS = 5
+const EVOLUTION_BASE = process.env.EVOLUTION_BASE_URL ?? "http://localhost:8080"
+const EVOLUTION_KEY  = process.env.EVOLUTION_API_KEY  ?? ""
 
 const TEXT_TYPES = new Set(["conversation", "extendedTextMessage"])
 
@@ -58,8 +60,39 @@ function extractMediaAttachment(msg: EvoMessage, msgType: string) {
     mimeType,
     size: Number.isFinite(size) ? Number(size) : null,
     remoteUrl,
-    metadata: media,
+    metadata: {
+      waMessageId: msg.key?.id ?? null,
+      media,
+    },
   }
+}
+
+async function fetchEvolutionMediaBase64(instanceId: string, msg: EvoMessage): Promise<string | null> {
+  if (!EVOLUTION_KEY) return null
+
+  const bodies = [
+    { message: msg, convertToMp4: false },
+    { key: msg.key, message: msg.message, convertToMp4: false },
+  ]
+
+  for (const body of bodies) {
+    try {
+      const response = await fetch(`${EVOLUTION_BASE}/chat/getBase64FromMediaMessage/${instanceId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: EVOLUTION_KEY },
+        body: JSON.stringify(body),
+      })
+      if (!response.ok) continue
+      const data = await response.json() as { base64?: string }
+      if (typeof data.base64 === "string" && data.base64.trim()) {
+        return data.base64
+      }
+    } catch {
+      // Try the next body shape, then fallback to direct URL download.
+    }
+  }
+
+  return null
 }
 
 async function processInbound(inbound: {
@@ -150,7 +183,17 @@ async function processInbound(inbound: {
   const mediaAttachment = extractMediaAttachment(msg, msgType)
   if (mediaAttachment) {
     try {
-      const saved = mediaAttachment.remoteUrl
+      const base64 = await fetchEvolutionMediaBase64(inbound.instanceId, msg)
+      const downloadMethod = base64 ? "evolution-base64" : mediaAttachment.remoteUrl ? "remote-url" : "metadata-only"
+      const saved = base64
+        ? await saveBase64Attachment({
+            companyId: inbound.companyId,
+            conversationId: convId,
+            fileName: mediaAttachment.fileName,
+            mimeType: mediaAttachment.mimeType,
+            base64,
+          })
+        : mediaAttachment.remoteUrl
         ? await saveRemoteAttachment({
             companyId: inbound.companyId,
             conversationId: convId,
@@ -173,7 +216,7 @@ async function processInbound(inbound: {
           url: saved?.url ?? mediaAttachment.remoteUrl ?? "",
           source: "WHATSAPP_INBOUND",
           externalUrl: mediaAttachment.remoteUrl,
-          metadata: mediaAttachment.metadata,
+          metadata: { ...mediaAttachment.metadata, downloadMethod },
         },
       })
     } catch (err) {
@@ -190,7 +233,7 @@ async function processInbound(inbound: {
           url: mediaAttachment.remoteUrl ?? "",
           source: "WHATSAPP_INBOUND",
           externalUrl: mediaAttachment.remoteUrl,
-          metadata: mediaAttachment.metadata,
+          metadata: { ...mediaAttachment.metadata, downloadMethod: "failed" },
         },
       })
     }
@@ -286,4 +329,63 @@ export async function runInboundProcessor(
 
     await handle.finish({ total: pending.length, processed, failed })
   })
+}
+
+export async function repairInboundMedia(ctx: WorkerContext = {}) {
+  const attachments = await db.messageAttachment.findMany({
+    where: {
+      source: "WHATSAPP_INBOUND",
+      type: { in: ["AUDIO", "IMAGE", "DOCUMENT", "VIDEO"] },
+      ...(ctx.companyId ? { companyId: ctx.companyId } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    select: {
+      id: true,
+      companyId: true,
+      conversationId: true,
+      fileName: true,
+      mimeType: true,
+      metadata: true,
+    },
+  })
+
+  let repaired = 0
+
+  for (const attachment of attachments) {
+    const metadata = attachment.metadata as { waMessageId?: string | null; downloadMethod?: string | null } | null
+    if (metadata?.downloadMethod === "evolution-base64" || !metadata?.waMessageId) continue
+
+    const inbound = await db.inboundMessage.findFirst({
+      where: { companyId: attachment.companyId, waMessageId: metadata.waMessageId },
+      select: { instanceId: true, payload: true },
+    })
+    if (!inbound) continue
+
+    const base64 = await fetchEvolutionMediaBase64(inbound.instanceId, inbound.payload as EvoMessage)
+    if (!base64) continue
+
+    const saved = await saveBase64Attachment({
+      companyId: attachment.companyId,
+      conversationId: attachment.conversationId,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      base64,
+    })
+
+    await db.messageAttachment.update({
+      where: { id: attachment.id },
+      data: {
+        fileName: saved.fileName,
+        mimeType: saved.mimeType,
+        size: saved.size,
+        storagePath: saved.storagePath,
+        url: saved.url,
+        metadata: { ...(attachment.metadata as object), downloadMethod: "evolution-base64", repairedAt: new Date().toISOString() },
+      },
+    })
+    repaired++
+  }
+
+  return repaired
 }

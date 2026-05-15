@@ -13,13 +13,13 @@ import { runSegmentSync }          from "./segment-sync.worker.js"
 import { runCardScore }            from "./card-score.worker.js"
 import { runStageSync }            from "./stage-sync.worker.js"
 import { runAiScore }              from "./ai-score.worker.js"
-import { runInboundProcessor }     from "./inbound-processor.worker.js"
+import { repairInboundMedia, runInboundProcessor } from "./inbound-processor.worker.js"
 import { runOutboundSender }       from "./outbound-sender.worker.js"
 import { runOutboundRecovery }     from "./outbound-recovery.worker.js"
 import { runAssignmentRecovery }   from "./assignment-recovery.worker.js"
 import { runEmailSync }            from "./email-sync.worker.js"
 
-export { runSegmentSync, runCardScore, runStageSync, runAiScore, runInboundProcessor, runOutboundSender, runOutboundRecovery, runAssignmentRecovery, runEmailSync }
+export { runSegmentSync, runCardScore, runStageSync, runAiScore, runInboundProcessor, repairInboundMedia, runOutboundSender, runOutboundRecovery, runAssignmentRecovery, runEmailSync }
 
 const MIN = 60_000
 
