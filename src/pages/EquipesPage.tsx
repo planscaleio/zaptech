@@ -468,15 +468,27 @@ export default function EquipesPage() {
   useEffect(() => {
     if (!companyId) return
     setLoading(true)
+    const now = new Date()
     Promise.all([
       fetch(`/api/teams?companyId=${companyId}`).then((r) => r.json()),
       fetch(`/api/teams/users?companyId=${companyId}`).then((r) => r.json()),
+      fetch(`/api/teams/goals-report?companyId=${companyId}&month=${now.getMonth() + 1}&year=${now.getFullYear()}`).then((r) => r.json()).catch(() => []),
     ])
-      .then(([t, u]: [Team[], TeamUser[]]) => {
-        setTeams(t); setUsers(u)
+      .then(([t, u, goals]: [Team[], TeamUser[], any[]]) => {
+        const goalsMap = new Map(goals.map((g: any) => [g.id, g]))
+        const enriched = t.map((team) => {
+          const g = goalsMap.get(team.id)
+          if (!g) return team
+          return {
+            ...team,
+            pipelineValue: String(g.pipelineAtivo + g.receitaFechada),
+            conversionRate: String(g.taxaConversao),
+          }
+        })
+        setTeams(enriched); setUsers(u)
         setSupportEnabled((current) => {
           const next = { ...current }
-          t.forEach((team) => {
+          enriched.forEach((team) => {
             if (next[team.id] === undefined) {
               const supportLike = /suporte|implant|financeiro|cs/i.test(team.name) || team.channels.some((channel) => ["EMAIL", "WHATSAPP", "WEBHOOK"].includes(channel.channel))
               next[team.id] = supportLike
@@ -484,7 +496,7 @@ export default function EquipesPage() {
           })
           return next
         })
-        if (t.length > 0) setSelected(t[0])
+        if (enriched.length > 0) setSelected(enriched[0])
       })
       .catch(() => {})
       .finally(() => setLoading(false))

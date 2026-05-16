@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState, useEffect, useRef } from "react"
 import { useAuth } from "@/hooks/useAuth"
+import { useTeam } from "@/contexts/TeamContext"
 import {
   DndContext,
   DragOverlay,
@@ -930,6 +931,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   const auth = useAuth()
   const companyId = auth?.companyId
   const isEmailView = mode === "emails"
+  const { activeTeamId } = useTeam()
 
   const [convList, setConvList] = useState<ConvSummary[]>([])
   const [selected, setSelected] = useState<ConvDetail | null>(null)
@@ -1109,8 +1111,9 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   const conversationListUrl = useCallback(() => {
     const params = new URLSearchParams({ companyId: companyId ?? "" })
     if (isEmailView) params.set("channel", "EMAIL")
+    if (activeTeamId) params.set("teamId", activeTeamId)
     return `/api/conversations?${params.toString()}`
-  }, [companyId, isEmailView])
+  }, [companyId, isEmailView, activeTeamId])
 
   const scopeConversations = useCallback((data: ConvSummary[]) => {
     return isEmailView ? data : data.filter((conversation) => conversation.channel !== "EMAIL")
@@ -6337,6 +6340,30 @@ export function AIAuditsView() {
 }
 
 export function ReportsView() {
+  const auth = useAuth()
+  const companyId = auth?.companyId ?? ""
+  const [goalsMonth, setGoalsMonth] = useState(new Date().getMonth() + 1)
+  const [goalsYear, setGoalsYear] = useState(new Date().getFullYear())
+  const [goalsData, setGoalsData] = useState<{
+    id: string; name: string; targetValue: string | null; manager: { id: string; name: string } | null
+    pipelineAtivo: number; receitaFechada: number; totalConversas: number; conversasFechadas: number
+    taxaConversao: number; percentMeta: number
+    members: { id: string; role: string | null; leadCount: number; closedCount: number; user: { id: string; name: string; role: string; avatarUrl: string | null } }[]
+  }[]>([])
+  const [goalsLoading, setGoalsLoading] = useState(false)
+  const [expandedTeam, setExpandedTeam] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!companyId) return
+    setGoalsLoading(true)
+    fetch(`/api/teams/goals-report?companyId=${companyId}&month=${goalsMonth}&year=${goalsYear}`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setGoalsData(Array.isArray(data) ? data : []))
+      .catch(() => setGoalsData([]))
+      .finally(() => setGoalsLoading(false))
+  }, [companyId, goalsMonth, goalsYear])
+
+  const monthNames = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
   const reportMetrics = [
     ["Receita prevista", "R$ 1,18 mi", "+14% vs período anterior"],
     ["Pipeline criado", "R$ 2,84 mi", "312 novas oportunidades"],
@@ -6435,28 +6462,96 @@ export function ReportsView() {
 
           <Card className="mt-3">
             <CardHeader className="p-3 pb-2">
-              <CardTitle>Produtividade das equipes</CardTitle>
-              <CardDescription>Atendimento, conversão, SLA e pipeline por time</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-2 p-3 pt-0 lg:grid-cols-3">
-              {salesTeams.map((team) => (
-                <div key={team.name} className="rounded-lg border bg-white p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-semibold">{team.name}</p>
-                    <Badge variant="secondary">{team.conversion}</Badge>
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Meta</span>
-                      <span className="font-medium">{team.target}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-muted-foreground">Pipeline</span>
-                      <span className="font-semibold text-primary">{team.pipeline}</span>
-                    </div>
-                  </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Metas das equipes</CardTitle>
+                  <CardDescription>Progresso mensal: pipeline + receita vs meta</CardDescription>
                 </div>
-              ))}
+                <div className="flex items-center gap-1.5">
+                  <button
+                    className="rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40"
+                    disabled={goalsMonth <= 1}
+                    onClick={() => { if (goalsMonth <= 1) { setGoalsMonth(12); setGoalsYear((y) => y - 1) } else setGoalsMonth((m) => m - 1) }}
+                  >‹</button>
+                  <span className="min-w-[5rem] text-center text-xs font-medium">{monthNames[goalsMonth - 1]}/{goalsYear}</span>
+                  <button
+                    className="rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40"
+                    disabled={goalsMonth >= 12}
+                    onClick={() => { if (goalsMonth >= 12) { setGoalsMonth(1); setGoalsYear((y) => y + 1) } else setGoalsMonth((m) => m + 1) }}
+                  >›</button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-3 pt-0">
+              {goalsLoading && <p className="py-4 text-center text-xs text-muted-foreground">Carregando…</p>}
+              {!goalsLoading && goalsData.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">Nenhuma equipe com meta definida</p>}
+              {!goalsLoading && goalsData.length > 0 && (
+                <table className="w-full border-collapse text-xs">
+                  <thead className="border-b text-[10px] uppercase tracking-wide text-muted-foreground">
+                    <tr>
+                      <th className="px-2 py-2 text-left font-semibold">Equipe</th>
+                      <th className="px-2 py-2 text-right font-semibold">Meta</th>
+                      <th className="px-2 py-2 text-right font-semibold">Pipeline</th>
+                      <th className="px-2 py-2 text-right font-semibold">Receita</th>
+                      <th className="px-2 py-2 text-left font-semibold">Progresso</th>
+                      <th className="px-2 py-2 text-right font-semibold">Conv.</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {goalsData.map((team) => {
+                      const target = Number(team.targetValue ?? 0)
+                      const total = team.pipelineAtivo + team.receitaFechada
+                      const pct = team.percentMeta
+                      const isExpanded = expandedTeam === team.id
+                      return (
+                        <Fragment key={team.id}>
+                          <tr
+                            className="cursor-pointer border-b hover:bg-muted/30"
+                            onClick={() => setExpandedTeam(isExpanded ? null : team.id)}
+                          >
+                            <td className="px-2 py-2.5 font-medium">{team.name}</td>
+                            <td className="px-2 py-2.5 text-right">{formatCurrency(target)}</td>
+                            <td className="px-2 py-2.5 text-right text-muted-foreground">{formatCurrency(team.pipelineAtivo)}</td>
+                            <td className="px-2 py-2.5 text-right font-semibold text-primary">{formatCurrency(team.receitaFechada)}</td>
+                            <td className="px-2 py-2.5">
+                              <div className="flex items-center gap-2">
+                                <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                                  <div
+                                    className={cn("h-full rounded-full transition-all", pct >= 100 ? "bg-emerald-500" : pct >= 60 ? "bg-amber-500" : "bg-red-400")}
+                                    style={{ width: `${Math.min(pct, 100)}%` }}
+                                  />
+                                </div>
+                                <span className={cn("w-10 text-right font-medium", pct >= 100 ? "text-emerald-600" : pct >= 60 ? "text-amber-600" : "text-red-500")}>
+                                  {pct.toFixed(0)}%
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-2 py-2.5 text-right">{team.taxaConversao.toFixed(1)}%</td>
+                          </tr>
+                          {isExpanded && team.members.length > 0 && (
+                            <tr>
+                              <td colSpan={6} className="bg-muted/20 px-6 py-2">
+                                <div className="grid grid-cols-[1fr_5rem_5rem] gap-2 text-[11px]">
+                                  <span className="font-medium text-muted-foreground">Membro</span>
+                                  <span className="text-right text-muted-foreground">Leads</span>
+                                  <span className="text-right text-muted-foreground">Fechados</span>
+                                  {team.members.map((m) => (
+                                    <Fragment key={m.id}>
+                                      <span>{m.user.name}</span>
+                                      <span className="text-right">{m.leadCount}</span>
+                                      <span className="text-right">{m.closedCount}</span>
+                                    </Fragment>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
             </CardContent>
           </Card>
         </section>
