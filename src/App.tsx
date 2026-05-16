@@ -37,6 +37,7 @@ import {
   Command,
   FileText,
   GitBranch,
+  HelpCircle,
   ImageIcon,
   Inbox,
   Kanban,
@@ -1053,8 +1054,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
 
   // Actions dropdown + opportunity modal
   type Pipeline = { id: string; name: string; columns: { id: string; name: string }[] }
-  const [actionsOpen, setActionsOpen] = useState(false)
-  const actionsRef = useRef<HTMLDivElement>(null)
+  const [helpOpen, setHelpOpen] = useState(false)
   const [oppModalOpen, setOppModalOpen] = useState(false)
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [pipelinesLoading, setPipelinesLoading] = useState(false)
@@ -1963,7 +1963,6 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
     function handler(e: MouseEvent) {
       if (aiDropdownRef.current && !aiDropdownRef.current.contains(e.target as Node)) setAiDropdownOpen(false)
       if (tagFilterRef.current && !tagFilterRef.current.contains(e.target as Node)) setTagFilterOpen(false)
-      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) setActionsOpen(false)
       if (convMenuRef.current && !convMenuRef.current.contains(e.target as Node)) setConvMenuOpen(null)
       if (manualTagRef.current && !manualTagRef.current.contains(e.target as Node)) {
         setManualTagOpen(false)
@@ -2447,73 +2446,10 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                     </div>
                   )}
                 </div>
-                {/* Actions dropdown */}
-                <div className="relative" ref={actionsRef}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setActionsOpen((v) => !v)}
-                    className="gap-1.5"
-                  >
-                    Ações
-                    <ChevronDown className="size-3.5" />
-                  </Button>
-                  {actionsOpen && (
-                    <div className="absolute right-0 top-full z-50 mt-1.5 w-52 overflow-hidden rounded-xl border bg-white shadow-lg">
-                      <button
-                        onClick={openOpportunityModal}
-                        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
-                      >
-                        <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
-                          <Kanban className="size-3.5" />
-                        </span>
-                        Criar Oportunidade
-                      </button>
-                      <button
-                        onClick={openTicketModal}
-                        className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
-                      >
-                        <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-cyan-50 text-cyan-700">
-                          <LifeBuoy className="size-3.5" />
-                        </span>
-                        Abrir chamado
-                      </button>
-                      {selected && !["ARQUIVADO","PARA_EXCLUIR"].includes(selected.status) && (
-                        <button
-                          onClick={() => { updateConvStatus(selected.id, "ARQUIVADO"); setActionsOpen(false) }}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
-                        >
-                          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                            <Archive className="size-3.5" />
-                          </span>
-                          Arquivar conversa
-                        </button>
-                      )}
-                      {selected?.status === "ARQUIVADO" && (
-                        <button
-                          onClick={() => { updateConvStatus(selected.id, "EM_ANALISE"); setActionsOpen(false) }}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
-                        >
-                          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                            <ArchiveX className="size-3.5" />
-                          </span>
-                          Desarquivar conversa
-                        </button>
-                      )}
-                      {["OWNER","ADMIN","GESTOR"].includes(auth?.role ?? "") && selected && selected.status !== "PARA_EXCLUIR" && (
-                        <button
-                          onClick={() => { updateConvStatus(selected.id, "PARA_EXCLUIR"); setActionsOpen(false) }}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm text-amber-700 transition-colors hover:bg-amber-50"
-                        >
-                          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-amber-50 text-amber-700">
-                            <Trash2 className="size-3.5" />
-                          </span>
-                          Marcar para excluir
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
+                {/* Help button */}
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => setHelpOpen(true)} title="Ajuda">
+                  <HelpCircle className="size-4 text-muted-foreground" />
+                </Button>
 
                 {/* AI tools dropdown */}
                 <div className="relative" ref={aiDropdownRef}>
@@ -3746,10 +3682,27 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
           {/* ── Ações rápidas ───────────────────────────────────────────── */}
           <Card>
             <CardHeader className="p-3 pb-2">
-              <CardTitle>Ações rápidas</CardTitle>
-              <CardDescription>Operações vinculadas a esta conversa</CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Ações rápidas</CardTitle>
+                  <CardDescription>Operações vinculadas a esta conversa</CardDescription>
+                </div>
+                <Button variant="ghost" size="icon" className="size-6" onClick={() => setHelpOpen(true)} title="Ajuda do atendimento">
+                  <HelpCircle className="size-3.5 text-muted-foreground" />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="space-y-2 p-3 pt-0">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start gap-2"
+                onClick={openOpportunityModal}
+                disabled={!selected}
+              >
+                <Kanban className="size-3.5" />
+                Criar Oportunidade
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -3781,6 +3734,39 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                 <ArrowRightLeft className="size-3.5" />
                 Transferir conversa
               </Button>
+              {selected && !["ARQUIVADO","PARA_EXCLUIR"].includes(selected.status) && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-start gap-2"
+                  onClick={() => updateConvStatus(selected.id, "ARQUIVADO")}
+                >
+                  <Archive className="size-3.5" />
+                  Arquivar conversa
+                </Button>
+              )}
+              {selected?.status === "ARQUIVADO" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-start gap-2"
+                  onClick={() => updateConvStatus(selected.id, "EM_ANALISE")}
+                >
+                  <ArchiveX className="size-3.5" />
+                  Desarquivar conversa
+                </Button>
+              )}
+              {["OWNER","ADMIN","GESTOR"].includes(auth?.role ?? "") && selected && selected.status !== "PARA_EXCLUIR" && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-start gap-2 text-amber-700 hover:bg-amber-50 hover:text-amber-800"
+                  onClick={() => updateConvStatus(selected.id, "PARA_EXCLUIR")}
+                >
+                  <Trash2 className="size-3.5" />
+                  Marcar para excluir
+                </Button>
+              )}
             </CardContent>
           </Card>
 
@@ -4328,6 +4314,231 @@ export function BoardsView() {
         </section>
 
       </div>
+
+      {/* ── Help Sheet ──────────────────────────────────────────────── */}
+      <Sheet open={helpOpen} onOpenChange={setHelpOpen} className="w-full max-w-[560px]">
+        <SheetContent>
+          <SheetHeader className="mb-6 flex-col items-stretch gap-2">
+            <SheetTitle className="flex items-center gap-2 text-base">
+              <span className="flex size-7 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <HelpCircle className="size-4" />
+              </span>
+              Atendimento — Central de Ajuda
+            </SheetTitle>
+            <p className="text-sm text-muted-foreground">
+              Guia completo sobre como usar o atendimento para gerenciar conversas com seus clientes.
+            </p>
+          </SheetHeader>
+
+          <div className="space-y-6 pb-8">
+
+            {/* Visão geral */}
+            <section className="space-y-3">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <Inbox className="size-4 text-primary" />
+                Fila inteligente
+              </h3>
+              <div className="space-y-2 rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
+                <p>A <strong className="text-foreground">Fila inteligente</strong> organiza suas conversas por prioridade, usando intenção detectada pela IA e SLA. Use o <strong className="text-foreground">filtro</strong> abaixo do título para encontrar rapidamente conversas que precisam de atenção.</p>
+                <div className="mt-3 divide-y rounded-lg border bg-white overflow-hidden text-xs">
+                  {[
+                    { label: "Todas as conversas", desc: "Mostra todas as conversas da empresa visíveis a você." },
+                    { label: "Suas conversas", desc: "Apenas conversas atribuídas diretamente a você." },
+                    { label: "Tempo excedido", desc: "Cliente esperando além do tempo máximo configurado (padrão 30 min)." },
+                    { label: "Aguardando resposta", desc: "Você foi o último a responder — aguardando retorno do cliente." },
+                    { label: "Não respondidas", desc: "Conversas que ainda não receberam nenhuma resposta de atendente." },
+                    { label: "Não atribuídas", desc: "Conversas que caíram na fila do time mas ninguém assumiu." },
+                    { label: "Conversas do bot", desc: "Conversas sendo atendidas por um agente de IA." },
+                    { label: "Transferidas", desc: "Conversas transferidas para você que ainda não foram respondidas." },
+                  ].map(({ label, desc }) => (
+                    <div key={label} className="flex items-start gap-3 px-3 py-2">
+                      <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-semibold text-primary">{label}</span>
+                      <span className="text-muted-foreground">{desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            {/* Assumir conversa */}
+            <section className="space-y-3">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <UserRound className="size-4 text-emerald-600" />
+                Assumir e atribuir conversas
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Quando uma conversa chega via regras de distribuição e fica na fila do time (sem atendente), o botão <strong className="text-foreground">Assumir</strong> aparece no card. Clique para assumir a conversa como atendente responsável.
+              </p>
+              <div className="rounded-lg border border-dashed bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+                Gestores (OWNER, ADMIN, GESTOR) veem todas as conversas da empresa. Atendentes só veem conversas atribuídas a eles ou na fila dos seus times.
+              </div>
+            </section>
+
+            {/* Ações rápidas */}
+            <section className="space-y-3">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <Zap className="size-4 text-amber-500" />
+                Ações rápidas
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Na barra lateral direita, o card <strong className="text-foreground">Ações rápidas</strong> concentra todas as operações da conversa:
+              </p>
+              <div className="divide-y rounded-xl border overflow-hidden text-sm">
+                {[
+                  { label: "Criar Oportunidade", desc: "Gera um card no funil CRM vinculado a esta conversa.", icon: "bg-emerald-50 text-emerald-700" },
+                  { label: "Criar orçamento", desc: "Abre o construtor de orçamento com dados do cliente preenchidos.", icon: "bg-blue-50 text-blue-700" },
+                  { label: "Abrir chamado", desc: "Cria um ticket de suporte técnico vinculado à conversa.", icon: "bg-cyan-50 text-cyan-700" },
+                  { label: "Transferir conversa", desc: "Envia a conversa para outro atendente ou equipe.", icon: "bg-violet-50 text-violet-700" },
+                  { label: "Arquivar conversa", desc: "Move a conversa para o arquivo morto. Pode ser desarquivada depois.", icon: "bg-muted text-muted-foreground" },
+                  { label: "Marcar para excluir", desc: "Sinaliza a conversa para exclusão (apenas gestores).", icon: "bg-amber-50 text-amber-700" },
+                ].map(({ label, desc, icon }) => (
+                  <div key={label} className="flex items-start gap-3 bg-white px-3 py-2.5">
+                    <span className={cn("mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold", icon)}>{label}</span>
+                    <p className="text-xs text-muted-foreground">{desc}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Transferência */}
+            <section className="space-y-3">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <ArrowRightLeft className="size-4 text-violet-600" />
+                Transferência de conversa
+              </h3>
+              <div className="space-y-2 rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
+                <p>Ao transferir, você pode escolher:</p>
+                <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
+                  <div className="rounded-lg border bg-violet-50 p-3">
+                    <p className="font-semibold text-violet-700">Para atendente</p>
+                    <p className="mt-1 text-muted-foreground">A conversa vai direto para o atendente escolhido. O cliente recebe uma notificação automática.</p>
+                  </div>
+                  <div className="rounded-lg border bg-primary/5 p-3">
+                    <p className="font-semibold text-primary">Para equipe</p>
+                    <p className="mt-1 text-muted-foreground">A conversa vai para a fila da equipe. O primeiro que assumir fica responsável.</p>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs">Conversas transferidas para você aparecem no filtro <strong className="text-foreground">Transferidas</strong> até que você responda.</p>
+              </div>
+            </section>
+
+            {/* Mensagens e anexos */}
+            <section className="space-y-3">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <Send className="size-4 text-sky-600" />
+                Enviando mensagens e anexos
+              </h3>
+              <div className="space-y-2 rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
+                <p>Digite sua mensagem no campo na parte inferior do chat e pressione <strong className="text-foreground">Enter</strong> ou clique no botão de envio.</p>
+                <div className="mt-2 space-y-1.5 text-xs">
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-sky-100 text-[9px] font-bold text-sky-700">1</span>
+                    <span><strong className="text-foreground">Anexos:</strong> Clique no ícone de clipe para enviar imagens, documentos ou áudios.</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-sky-100 text-[9px] font-bold text-sky-700">2</span>
+                    <span><strong className="text-foreground">Modelos:</strong> Use o botão de modelos para mensagens rápidas pré-definidas.</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-sky-100 text-[9px] font-bold text-sky-700">3</span>
+                    <span><strong className="text-foreground">IA Assistente:</strong> Clique em “Ferramentas IA” para gerar sugestões de resposta com inteligência artificial.</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Contexto do cliente */}
+            <section className="space-y-3">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <BrainCircuit className="size-4 text-rose-500" />
+                Contexto do cliente e IA
+              </h3>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>A barra lateral mostra informações contextuais que ajudam no atendimento:</p>
+                <div className="divide-y rounded-xl border overflow-hidden text-xs">
+                  {[
+                    { label: "Valor potencial", desc: "Valor estimado do negócio. Editável clicando no campo." },
+                    { label: "Etapa / Origem", desc: "Etapa do funil e canal de entrada do lead." },
+                    { label: "Sentimento", desc: "Análise de sentimento do cliente (positivo, neutro, negativo)." },
+                    { label: "Risco IA", desc: "Probabilidade de churn ou perda calculada pela IA." },
+                    { label: "Próxima ação", desc: "Recomendação da IA sobre o que fazer a seguir." },
+                  ].map(({ label, desc }) => (
+                    <div key={label} className="flex items-start gap-3 bg-white px-3 py-2">
+                      <span className="shrink-0 rounded bg-rose-50 px-1.5 py-0.5 font-semibold text-rose-700">{label}</span>
+                      <span className="text-muted-foreground">{desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            {/* Status da conversa */}
+            <section className="space-y-3">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <Activity className="size-4 text-orange-500" />
+                Status e ciclo de vida
+              </h3>
+              <div className="space-y-2 text-xs">
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { status: "Em análise", desc: "Conversa recebida, aguardando primeira análise.", color: "bg-sky-50 text-sky-700" },
+                    { status: "Aguardando", desc: "Atendente respondeu, aguardando retorno do cliente.", color: "bg-amber-50 text-amber-700" },
+                    { status: "Alta intenção", desc: "Lead com alta probabilidade de conversão.", color: "bg-emerald-50 text-emerald-700" },
+                    { status: "Resolvido", desc: "Problema resolvido com sucesso.", color: "bg-green-50 text-green-700" },
+                    { status: "Encerrado", desc: "Conversa finalizada sem resolução.", color: "bg-slate-50 text-slate-700" },
+                    { status: "Arquivado", desc: "Removido da fila ativa para organização.", color: "bg-muted text-muted-foreground" },
+                  ].map(({ status, desc, color }) => (
+                    <div key={status} className="rounded-lg border p-2.5">
+                      <span className={cn("rounded px-1.5 py-0.5 font-semibold", color)}>{status}</span>
+                      <p className="mt-1 text-muted-foreground">{desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+
+            {/* Tags */}
+            <section className="space-y-3">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <Tags className="size-4 text-primary" />
+                Tags e organização
+              </h3>
+              <div className="space-y-2 rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
+                <p>Adicione <strong className="text-foreground">tags</strong> a uma conversa para categorizá-la. Clique no botão “Tags” no cabeçalho do chat para adicionar ou remover tags.</p>
+                <p className="text-xs">Use o filtro de tags na barra de busca da fila para encontrar conversas por categoria.</p>
+              </div>
+            </section>
+
+            {/* Atalhos */}
+            <section className="space-y-3">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <Command className="size-4 text-primary" />
+                Dicas de produtividade
+              </h3>
+              <div className="space-y-1.5 text-xs text-muted-foreground">
+                <div className="flex items-start gap-2 rounded-lg border bg-white px-3 py-2">
+                  <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-semibold text-primary">Enter</span>
+                  <span>Envia a mensagem. Use Shift+Enter para quebra de linha.</span>
+                </div>
+                <div className="flex items-start gap-2 rounded-lg border bg-white px-3 py-2">
+                  <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-semibold text-primary">Filtros</span>
+                  <span>Combine filtro de status com busca textual e filtro de tags para encontrar conversas rapidamente.</span>
+                </div>
+                <div className="flex items-start gap-2 rounded-lg border bg-white px-3 py-2">
+                  <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-semibold text-primary">IA</span>
+                  <span>Deixe a IA gerar rascunhos de resposta e personalize antes de enviar. Economiza tempo em resuestas padronizadas.</span>
+                </div>
+                <div className="flex items-start gap-2 rounded-lg border bg-white px-3 py-2">
+                  <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-semibold text-primary">Transferência</span>
+                  <span>Transfira para a equipe certa quando o assunto não for da sua alçada. O cliente recebe notificação automática.</span>
+                </div>
+              </div>
+            </section>
+
+          </div>
+        </SheetContent>
+      </Sheet>
+
       {/* Card detail sheet */}
       {selectedCard && (
         <Sheet open={sheetOpen} onClose={() => setSheetOpen(false)}>
