@@ -378,6 +378,7 @@ model Company {
 
   transferMessageUser String?   // ex: "Você será atendido por {nome}."
   transferMessageTeam String?   // ex: "Você foi transferido para nossa equipe de {nome}."
+  maxWaitMinutes     Int?       @default(30)  // tempo máx. de espera do cliente em minutos
 
   mrr         Decimal   @default(0) @db.Decimal(10, 2)
   nextBilling DateTime?
@@ -617,6 +618,8 @@ model Conversation {
   preview       String?
   lastMessageAt DateTime?
   lastReadAt    DateTime?
+  transferredAt  DateTime?
+  transferredBy  String?
 
   company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
   customer  Customer? @relation(fields: [customerId], references: [id])
@@ -643,6 +646,7 @@ model Conversation {
   @@index([emailAccountId])
   @@index([teamId])
   @@index([lastMessageAt])
+  @@index([transferredAt])
 }
 
 model Message {

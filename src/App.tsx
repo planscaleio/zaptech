@@ -83,6 +83,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetHeader, SheetContent, SheetTitle } from "@/components/ui/sheet"
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { supportCategories, supportPriorities, supportTeams, type TicketCategory, type TicketPriority } from "@/lib/supportTickets"
 import { channelMatchesRop, loadRops, ropChannelLabel, type Rop } from "@/lib/rops"
@@ -562,6 +563,8 @@ interface ConvSummary {
   nextAction: string | null
   attendantId: string | null
   teamId: string | null
+  agentId: string | null
+  transferredAt: string | null
   hasUnread: boolean
   tags: { id: string; name: string; color: string }[]
   customer: { id: string; name: string; phone: string | null; email?: string | null; status: string; aiScore: number | null; isVip: boolean; avatarUrl?: string | null }
@@ -964,6 +967,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   const [tagFilterOpen, setTagFilterOpen] = useState(false)
   const tagFilterRef = useRef<HTMLDivElement>(null)
   const [showArchived, setShowArchived] = useState(false)
+  const [convFilter, setConvFilter] = useState<string>("all")
 
   // Conv item context menu (3 dots)
   const [convMenuOpen, setConvMenuOpen] = useState<string | null>(null)
@@ -1112,8 +1116,9 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
     const params = new URLSearchParams({ companyId: companyId ?? "" })
     if (isEmailView) params.set("channel", "EMAIL")
     if (activeTeamId) params.set("teamId", activeTeamId)
+    if (convFilter && convFilter !== "all") params.set("filter", convFilter)
     return `/api/conversations?${params.toString()}`
-  }, [companyId, isEmailView, activeTeamId])
+  }, [companyId, isEmailView, activeTeamId, convFilter])
 
   const scopeConversations = useCallback((data: ConvSummary[]) => {
     return isEmailView ? data : data.filter((conversation) => conversation.channel !== "EMAIL")
@@ -2055,7 +2060,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                   </CardDescription>
                 </div>
                 <button
-                  onClick={() => { setShowArchived((v) => !v); setConvSearch(""); setTagFilter(null) }}
+                  onClick={() => { setShowArchived((v) => !v); setConvSearch(""); setTagFilter(null); setConvFilter("all") }}
                   title={showArchived ? "Ver fila ativa" : "Ver arquivadas"}
                   className={cn(
                     "flex size-7 items-center justify-center rounded-lg transition-colors",
@@ -2067,6 +2072,25 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                   {showArchived ? <ArchiveX className="size-4" /> : <Archive className="size-4" />}
                 </button>
               </div>
+              {!isEmailView && (
+                <Select value={convFilter} onValueChange={(v) => { setConvFilter(v); setConvSearch(""); setTagFilter(null) }}>
+                  <SelectTrigger className="h-7 text-xs border-dashed">
+                    <SelectValue placeholder="Todas as conversas" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Todas as conversas</SelectItem>
+                    <SelectItem value="mine">Suas conversas</SelectItem>
+                    <SelectSeparator />
+                    <SelectItem value="overdue">Tempo excedido</SelectItem>
+                    <SelectItem value="waiting_reply">Aguardando resposta</SelectItem>
+                    <SelectItem value="unanswered">Não respondidas</SelectItem>
+                    <SelectSeparator />
+                    <SelectItem value="unassigned">Não atribuídas</SelectItem>
+                    <SelectItem value="bot">Conversas do bot</SelectItem>
+                    <SelectItem value="transferred">Transferidas</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
               <div className="grid grid-cols-[1fr_auto] gap-2 pt-2">
                 <div className="flex h-8 min-w-0 items-center gap-2 rounded-md border bg-white px-2">
                   <Search className="size-3.5 text-muted-foreground" />

@@ -180,7 +180,7 @@ export async function runOutboundSender(
 
           await tx.conversation.update({
             where: { id: msg.conversationId },
-            data:  { preview: (msg.body || (isMedia ? payload.fileName ?? "[arquivo]" : "")).slice(0, 200), lastMessageAt: new Date() },
+            data:  { preview: (msg.body || (isMedia ? payload.fileName ?? "[arquivo]" : "")).slice(0, 200), lastMessageAt: new Date(), transferredAt: null, transferredBy: null },
           })
         })
 

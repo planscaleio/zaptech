@@ -53,9 +53,9 @@ router.get("/unread-count", async (req: Request, res: Response) => {
   return res.json({ count: Number(result[0]?.count ?? 0) })
 })
 
-// GET /conversations?companyId=&channel=&teamId=&archived=
+// GET /conversations?companyId=&channel=&teamId=&filter=
 router.get("/", async (req: Request, res: Response) => {
-  const { companyId, channel, teamId } = req.query
+  const { companyId, channel, teamId, filter } = req.query
   if (!companyId || typeof companyId !== "string") {
     return res.status(400).json({ error: "companyId é obrigatório" })
   }
@@ -67,9 +67,16 @@ router.get("/", async (req: Request, res: Response) => {
   const requestedChannel = channel ? channel as ChannelParam : null
   const requestedTeamId = teamId && typeof teamId === "string" ? teamId : null
 
+  const allowedFilters = ["mine", "overdue", "waiting_reply", "unanswered", "unassigned", "bot", "transferred"] as const
+  type FilterParam = typeof allowedFilters[number]
+  const requestedFilter = filter && typeof filter === "string" && (allowedFilters as readonly string[]).includes(filter)
+    ? filter as FilterParam
+    : null
+
   // Visibility filter based on user role
   const currentUser = req.user
   const isManager = currentUser?.type === "user" && ["OWNER", "ADMIN", "GESTOR"].includes(currentUser.role ?? "")
+  const userId = currentUser?.sub ?? ""
 
   let visibilityFilter: Record<string, unknown> = {}
   if (!isManager && currentUser?.sub) {
@@ -86,12 +93,83 @@ router.get("/", async (req: Request, res: Response) => {
     }
   }
 
+  // ── Filter-specific WHERE clauses ──
+
+  // Simple Prisma filters
+  let filterCondition: Record<string, unknown> = {}
+  let matchingConvIds: string[] | null = null
+
+  if (requestedFilter === "mine") {
+    filterCondition = { attendantId: userId }
+  } else if (requestedFilter === "unassigned") {
+    filterCondition = { attendantId: null, teamId: { not: null } }
+  } else if (requestedFilter === "bot") {
+    filterCondition = { agentId: { not: null } }
+  } else if (requestedFilter === "transferred") {
+    // Conversations transferred to current user that haven't been replied to since transfer
+    const rows = await db.$queryRaw<{ id: string }[]>`
+      SELECT c.id FROM "Conversation" c
+      WHERE c."companyId" = ${companyId}
+        AND c."transferredAt" IS NOT NULL
+        AND c."attendantId" = ${userId}
+        AND NOT EXISTS (
+          SELECT 1 FROM "Message" m
+          WHERE m."conversationId" = c.id AND m.role = 'ATENDENTE' AND m."createdAt" > c."transferredAt"
+        )
+    `
+    matchingConvIds = rows.map((r) => r.id)
+  } else if (requestedFilter === "waiting_reply") {
+    // Last message is from attendant/bot — waiting for client reply
+    const rows = await db.$queryRaw<{ id: string }[]>`
+      SELECT c.id FROM "Conversation" c
+      WHERE c."companyId" = ${companyId}
+        AND (SELECT m.role FROM "Message" m WHERE m."conversationId" = c.id ORDER BY m."createdAt" DESC LIMIT 1) IN ('ATENDENTE', 'AGENTE_IA')
+    `
+    matchingConvIds = rows.map((r) => r.id)
+  } else if (requestedFilter === "unanswered") {
+    // No attendant/bot reply yet
+    const rows = await db.$queryRaw<{ id: string }[]>`
+      SELECT c.id FROM "Conversation" c
+      WHERE c."companyId" = ${companyId}
+        AND NOT EXISTS (SELECT 1 FROM "Message" m WHERE m."conversationId" = c.id AND m.role IN ('ATENDENTE', 'AGENTE_IA'))
+    `
+    matchingConvIds = rows.map((r) => r.id)
+  } else if (requestedFilter === "overdue") {
+    // Client waiting longer than maxWaitMinutes with no attendant reply
+    const company = await db.company.findUnique({
+      where: { id: companyId },
+      select: { maxWaitMinutes: true },
+    })
+    const maxMin = company?.maxWaitMinutes ?? 30
+    const rows = await db.$queryRaw<{ id: string }[]>`
+      SELECT c.id FROM "Conversation" c
+      WHERE c."companyId" = ${companyId}
+        AND EXISTS (
+          SELECT 1 FROM "Message" m
+          WHERE m."conversationId" = c.id AND m.role = 'CLIENTE'
+            AND m."createdAt" < NOW() - (${maxMin} || ' minutes')::interval
+            AND NOT EXISTS (
+              SELECT 1 FROM "Message" m2
+              WHERE m2."conversationId" = c.id AND m2.role IN ('ATENDENTE', 'AGENTE_IA') AND m2."createdAt" > m."createdAt"
+            )
+        )
+    `
+    matchingConvIds = rows.map((r) => r.id)
+  }
+
+  // If a complex filter returned empty, short-circuit
+  if (matchingConvIds !== null && matchingConvIds.length === 0) {
+    return res.json([])
+  }
+
   const conversations = await db.conversation.findMany({
     where: {
       companyId,
       ...(requestedChannel ? { channel: requestedChannel } : {}),
       ...(requestedTeamId ? { teamId: requestedTeamId } : {}),
       ...visibilityFilter,
+      ...filterCondition,
+      ...(matchingConvIds ? { id: { in: matchingConvIds } } : {}),
     },
     orderBy: { lastMessageAt: "desc" },
     take: 50,
@@ -109,6 +187,8 @@ router.get("/", async (req: Request, res: Response) => {
       attendantId: true,
       teamId: true,
       lastReadAt: true,
+      agentId: true,
+      transferredAt: true,
       customer: {
         select: { id: true, name: true, phone: true, email: true, status: true, aiScore: true, isVip: true },
       },
@@ -295,6 +375,7 @@ router.post("/:id/reply", async (req: Request, res: Response) => {
       channel: true,
       preview: true,
       emailAccountId: true,
+      transferredAt: true,
       customer: { select: { phone: true, email: true } },
     },
   })
@@ -353,6 +434,7 @@ router.post("/:id/reply", async (req: Request, res: Response) => {
         preview: text.trim().slice(0, 240),
         lastMessageAt: now,
         status: "AGUARDANDO",
+        ...(conversation.transferredAt ? { transferredAt: null, transferredBy: null } : {}),
       },
     })
     return res.status(201).json({ sent: true, message })
@@ -540,6 +622,11 @@ router.post("/:id/transfer", async (req: Request, res: Response) => {
   } else {
     await db.conversation.update({ where: { id: conv.id }, data: { attendantId: null, teamId: targetId } })
   }
+  // Mark as transferred so it appears in the "Transferidas" filter
+  await db.conversation.update({
+    where: { id: conv.id },
+    data: { transferredAt: new Date(), transferredBy: req.user?.sub ?? null },
+  })
 
   // System message (internal note)
   const safeAuthor = authorName?.trim() || "Sistema"
