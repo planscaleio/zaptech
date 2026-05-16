@@ -185,6 +185,7 @@ router.get("/", async (req: Request, res: Response) => {
       nextAction: true,
       tone: true,
       attendantId: true,
+      attendant: { select: { id: true, name: true, avatarUrl: true } },
       teamId: true,
       lastReadAt: true,
       agentId: true,
@@ -221,6 +222,32 @@ router.get("/", async (req: Request, res: Response) => {
   })))
 })
 
+// GET /conversations/customer/:customerId
+router.get("/customer/:customerId", async (req: Request, res: Response) => {
+  const { customerId } = req.params
+  const { companyId } = req.query
+  if (!companyId || typeof companyId !== "string") {
+    return res.status(400).json({ error: "companyId é obrigatório" })
+  }
+
+  const conversations = await db.conversation.findMany({
+    where: { customerId, companyId },
+    orderBy: { lastMessageAt: "desc" },
+    take: 50,
+    select: {
+      id: true,
+      channel: true,
+      status: true,
+      preview: true,
+      lastMessageAt: true,
+      createdAt: true,
+      attendant: { select: { id: true, name: true, avatarUrl: true } },
+    },
+  })
+
+  return res.json(conversations)
+})
+
 // GET /conversations/:id/messages
 router.get("/:id/messages", async (req: Request, res: Response) => {
   const { id } = req.params
@@ -238,6 +265,7 @@ router.get("/:id/messages", async (req: Request, res: Response) => {
       nextAction: true,
       tone: true,
       attendantId: true,
+      attendant: { select: { id: true, name: true, avatarUrl: true } },
       teamId: true,
       customer: {
         select: {

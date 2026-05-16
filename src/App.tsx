@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useEffect, useRef } from "react"
+import { Fragment, useCallback, useMemo, useState, useEffect, useRef } from "react"
 import { useAuth } from "@/hooks/useAuth"
 import { useTeam } from "@/contexts/TeamContext"
 import {
@@ -38,6 +38,7 @@ import {
   FileText,
   GitBranch,
   HelpCircle,
+  History,
   ImageIcon,
   Inbox,
   Kanban,
@@ -563,6 +564,7 @@ interface ConvSummary {
   aiReason: string | null
   nextAction: string | null
   attendantId: string | null
+  attendant: { id: string; name: string; avatarUrl: string | null } | null
   teamId: string | null
   agentId: string | null
   transferredAt: string | null
@@ -1011,6 +1013,15 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   const [transferTeams, setTransferTeams] = useState<{ id: string; name: string }[]>([])
   const [transferSearch, setTransferSearch] = useState("")
   const [transferLoading, setTransferLoading] = useState(false)
+
+  // Customer history state
+  const [customerHistoryOpen, setCustomerHistoryOpen] = useState(false)
+  const [customerHistoryData, setCustomerHistoryData] = useState<{
+    id: string; channel: string; status: string; preview: string | null;
+    lastMessageAt: string | null; createdAt: string;
+    attendant: { id: string; name: string; avatarUrl: string | null } | null;
+  }[]>([])
+  const [customerHistoryLoading, setCustomerHistoryLoading] = useState(false)
 
   // Inline edit: valor potencial do cliente
   const [editingPotentialValue, setEditingPotentialValue] = useState(false)
@@ -1632,7 +1643,6 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   }
 
   function openOpportunityModal() {
-    setActionsOpen(false)
     setOppSuccess(null)
     setOppName(selected?.customer.name ?? "")
     setOppDesc("")
@@ -1688,7 +1698,6 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
 
   function openTicketModal() {
     if (!selected) return
-    setActionsOpen(false)
     setTicketSuccess(null)
     setTicketError("")
     setTicketId(null)
@@ -1829,7 +1838,6 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
 
   function openQuoteModal() {
     if (!selected || !companyId) return
-    setActionsOpen(false)
     setQuoteError("")
     setQuoteSuccess("")
     setQuoteFreight("")
@@ -2020,10 +2028,24 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
       .then((r) => r.json())
       .then((d) => {
         if (d.error) { alert(d.error); return }
-        setConvList((prev) => prev.map((c) => c.id === convId ? { ...c, attendantId: auth.id! } : c))
+        setConvList((prev) => prev.map((c) => c.id === convId ? { ...c, attendantId: auth.id!, attendant: { id: auth.id!, name: auth!.name, avatarUrl: null } } : c))
         refreshActiveConversation(convId)
       })
       .catch(() => {})
+  }
+
+  function openCustomerHistory() {
+    if (!selected?.customer.id || !companyId) return
+    setCustomerHistoryLoading(true)
+    setCustomerHistoryOpen(true)
+    const params = new URLSearchParams({ companyId })
+    fetch(`/api/conversations/customer/${selected.customer.id}?${params.toString()}`)
+      .then((r) => r.json())
+      .then((data) => {
+        setCustomerHistoryData(data)
+        setCustomerHistoryLoading(false)
+      })
+      .catch(() => setCustomerHistoryLoading(false))
   }
 
   // Load all company tags when manual tag popover opens
@@ -2243,13 +2265,25 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                             <span className="truncate rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">#{primaryTag.name}</span>
                           )}
                           {conv.tags.length > 1 && <span className="text-[9px] text-muted-foreground">+{conv.tags.length - 1}</span>}
-                          {!conv.attendantId && conv.teamId && (
+                          {!conv.attendantId && (
                             <button
                               onClick={(e) => { e.stopPropagation(); claimConversation(conv.id) }}
-                              className="shrink-0 rounded bg-primary px-1.5 py-0.5 text-[9px] font-semibold text-white hover:bg-primary/90"
+                              className="shrink-0 rounded bg-primary px-1.5 py-0.5 text-[9px] font-semibold text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-primary/90"
                             >
-                              Assumir
+                              Capturar
                             </button>
+                          )}
+                          {conv.attendant && (
+                            <span className="inline-flex shrink-0 items-center gap-1 truncate text-[9px] text-muted-foreground">
+                              {conv.attendant.avatarUrl ? (
+                                <img src={conv.attendant.avatarUrl} className="size-3.5 rounded-full object-cover" alt="" />
+                              ) : (
+                                <span className="flex size-3.5 shrink-0 items-center justify-center rounded-full bg-muted text-[7px] font-semibold">
+                                  {conv.attendant.name.charAt(0).toUpperCase()}
+                                </span>
+                              )}
+                              {conv.attendant.name}
+                            </span>
                           )}
                           <span className={cn("ml-auto shrink-0 text-[10px]", selectedConv ? "font-semibold text-primary" : "text-muted-foreground")}>
                             {formatRelativeTime(conv.lastMessageAt)}
@@ -3677,6 +3711,71 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
           </SheetContent>
         </Sheet>
 
+        {/* ── Customer History Sheet ──────────────────────────────────── */}
+        <Sheet open={customerHistoryOpen} onOpenChange={(open) => { if (!open) setCustomerHistoryOpen(false) }} className="w-full max-w-[480px]">
+          <SheetContent>
+            <SheetHeader>
+              <div className="flex items-center gap-2">
+                <div className="flex size-8 items-center justify-center rounded-full bg-primary/10">
+                  <History className="size-4 text-primary" />
+                </div>
+                <div className="min-w-0">
+                  <SheetTitle>Histórico do cliente</SheetTitle>
+                  <p className="truncate text-xs text-muted-foreground">{selected?.customer.name}</p>
+                </div>
+              </div>
+            </SheetHeader>
+            <div className="mt-4 space-y-2">
+              {customerHistoryLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="size-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : customerHistoryData.length === 0 ? (
+                <div className="rounded-lg border bg-muted/20 py-8 text-center text-sm text-muted-foreground">
+                  <MessageCircle className="mx-auto mb-2 size-7 opacity-40" />
+                  Nenhuma conversa registrada.
+                </div>
+              ) : (
+                customerHistoryData.map((conv) => (
+                  <button
+                    key={conv.id}
+                    className="w-full rounded-lg border bg-white p-3 text-left transition-colors hover:bg-muted/30"
+                    onClick={() => {
+                      setCustomerHistoryOpen(false)
+                      loadDetail(conv.id)
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold">{conv.channel === "WHATSAPP" ? "WhatsApp" : conv.channel === "EMAIL" ? "E-mail" : conv.channel}</span>
+                        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">{statusLabel(conv.status)}</Badge>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">
+                        {formatRelativeTime(conv.lastMessageAt ?? conv.createdAt)}
+                      </span>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-xs leading-4 text-muted-foreground">
+                      {conv.preview ?? "—"}
+                    </p>
+                    {conv.attendant && (
+                      <div className="mt-1.5 flex items-center gap-1">
+                        {conv.attendant.avatarUrl ? (
+                          <img src={conv.attendant.avatarUrl} className="size-3.5 rounded-full object-cover" alt="" />
+                        ) : (
+                          <span className="flex size-3.5 items-center justify-center rounded-full bg-muted text-[7px] font-semibold">
+                            {conv.attendant.name.charAt(0).toUpperCase()}
+                          </span>
+                        )}
+                        <span className="text-[10px] text-muted-foreground">{conv.attendant.name}</span>
+                      </div>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </SheetContent>
+        </Sheet>
+
         {/* Right — context sidebar */}
         <aside className="min-h-0 space-y-3 overflow-y-auto pr-1">
           {/* ── Ações rápidas ───────────────────────────────────────────── */}
@@ -3723,6 +3822,16 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
               >
                 <LifeBuoy className="size-3.5" />
                 Abrir chamado
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full justify-start gap-2"
+                onClick={openCustomerHistory}
+                disabled={!selected}
+              >
+                <History className="size-3.5" />
+                Histórico do cliente
               </Button>
               <Button
                 variant="outline"
@@ -3956,6 +4065,7 @@ const PRIORITY_COLORS: Record<string, string> = {
 
 export function BoardsView() {
   const { companyId } = useAuth() ?? {}
+  const [helpOpen, setHelpOpen] = useState(false)
   const [boards, setBoards] = useState<BoardMeta[]>([])
   const [activeBoardId, setActiveBoardId] = useState<string | null>(null)
   const [board, setBoard] = useState<KBoard | null>(null)
