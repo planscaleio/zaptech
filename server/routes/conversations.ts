@@ -53,9 +53,9 @@ router.get("/unread-count", async (req: Request, res: Response) => {
   return res.json({ count: Number(result[0]?.count ?? 0) })
 })
 
-// GET /conversations?companyId=
+// GET /conversations?companyId=&channel=&teamId=&archived=
 router.get("/", async (req: Request, res: Response) => {
-  const { companyId, channel } = req.query
+  const { companyId, channel, teamId } = req.query
   if (!companyId || typeof companyId !== "string") {
     return res.status(400).json({ error: "companyId é obrigatório" })
   }
@@ -65,6 +65,7 @@ router.get("/", async (req: Request, res: Response) => {
     return res.status(400).json({ error: "channel inválido" })
   }
   const requestedChannel = channel ? channel as ChannelParam : null
+  const requestedTeamId = teamId && typeof teamId === "string" ? teamId : null
 
   // Visibility filter based on user role
   const currentUser = req.user
@@ -89,6 +90,7 @@ router.get("/", async (req: Request, res: Response) => {
     where: {
       companyId,
       ...(requestedChannel ? { channel: requestedChannel } : {}),
+      ...(requestedTeamId ? { teamId: requestedTeamId } : {}),
       ...visibilityFilter,
     },
     orderBy: { lastMessageAt: "desc" },

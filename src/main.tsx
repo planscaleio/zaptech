@@ -5,6 +5,7 @@ import "./index.css"
 
 import AppLayout from "@/layouts/AppLayout"
 import { installAuthFetchInterceptor } from "@/lib/auth"
+import { TeamProvider } from "@/contexts/TeamContext"
 import Login from "./Login"
 import Admin from "./Admin"
 import LandingPage  from "@/pages/landing/LandingPage"
@@ -82,6 +83,8 @@ const router = createBrowserRouter([
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <TeamProvider>
+      <RouterProvider router={router} />
+    </TeamProvider>
   </React.StrictMode>,
 )

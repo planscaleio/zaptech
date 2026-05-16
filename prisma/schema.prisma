@@ -608,6 +608,7 @@ model Conversation {
   emailAccountId String?
 
   channel       ConversationChannel
+  instanceId    String?             // nome da instância Evolution que recebeu a mensagem
   status        ConversationStatus  @default(EM_ANALISE)
   leadValue     Decimal?            @db.Decimal(10, 2)
   aiReason      String?
@@ -863,6 +864,9 @@ model Customer {
   @@index([companyId, stage])
   @@index([ownerId])
   @@index([email])
+  @@unique([companyId, phone])
+  @@unique([companyId, email])
+  @@unique([companyId, document])
 }
 
 model CustomerProduct {
@@ -1106,12 +1110,14 @@ model DistributionRule {
   name         String
   priority     Int            @default(0)
   active       Boolean        @default(true)
-  conditions   Json // RuleCondition[] — [{field, operator, value}]
-  actionType   RuleActionType
-  targetTeamId String?
-  targetUserId String?
-  strategy     RuleStrategy   @default(ROUND_ROBIN)
-  fallback     RuleFallback   @default(QUEUE)
+  conditions      Json // RuleConditionGroup[] — [{operator, conditions:[{field,operator,value}]}]
+  actionType      RuleActionType
+  targetTeamId    String?
+  targetUserId    String?
+  strategy        RuleStrategy   @default(ROUND_ROBIN)
+  fallback        RuleFallback   @default(QUEUE)
+  triggerCount    Int            @default(0)
+  lastTriggeredAt DateTime?
 
   company    Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
   targetTeam SalesTeam? @relation("RuleTargetTeam", fields: [targetTeamId], references: [id])

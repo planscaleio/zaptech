@@ -5,7 +5,10 @@
  * the userId of the attendant to assign, or null (unassigned / queue).
  *
  * Rules are evaluated in priority order (ASC). First match wins.
- * Each rule's conditions are ANDed together.
+ * Conditions are organized in groups. Groups are always ANDed together.
+ * Within each group, conditions are connected by the group's operator (AND | OR).
+ *
+ * Backward-compatible: flat RuleCondition[] is treated as a single AND group.
  */
 
 import { db } from "../db.js"
@@ -16,9 +19,24 @@ type RuleCondition = {
   value: string | number | boolean
 }
 
+type RuleConditionGroup = {
+  operator: "AND" | "OR"
+  conditions: RuleCondition[]
+}
+
 export type AttendantResolution = {
   userId: string | null
   teamId: string | null
+}
+
+function normalizeConditions(raw: unknown): RuleConditionGroup[] {
+  if (!Array.isArray(raw) || raw.length === 0) return []
+  // New format: array of groups
+  if (raw[0] && typeof raw[0] === "object" && "operator" in (raw[0] as object) && "conditions" in (raw[0] as object)) {
+    return raw as RuleConditionGroup[]
+  }
+  // Legacy format: flat array of conditions → single AND group
+  return [{ operator: "AND", conditions: raw as RuleCondition[] }]
 }
 
 export async function resolveAttendant(
@@ -32,8 +50,9 @@ export async function resolveAttendant(
     select: {
       id: true,
       channel: true,
+      instanceId: true,
       leadValue: true,
-      channel: true,
+      attendantId: true,
       customer: {
         select: {
           id: true,
@@ -77,17 +96,37 @@ export async function resolveAttendant(
   const tagNames = conv.tags.map((t) => t.tag.name.toLowerCase())
   const lastMsg  = conv.messages[0]?.text ?? ""
 
+  // Load team membership for current attendant (for "team" condition field)
+  let attendantTeamIds: string[] = []
+  if (conv.attendantId) {
+    const memberships = await db.salesTeamMember.findMany({
+      where: { userId: conv.attendantId },
+      select: { teamId: true },
+    })
+    attendantTeamIds = memberships.map((m) => m.teamId)
+  }
+
   for (const rule of rules) {
-    const conditions = (rule.conditions as RuleCondition[]) ?? []
+    const groups = normalizeConditions(rule.conditions)
 
-    // Empty conditions = matches everything
-    const matches = conditions.every((cond) => evaluateCondition(cond, conv, tagNames, lastMsg))
-    if (!matches) {
-      if (rule.fallback === "NEXT_RULE") continue
-      continue
-    }
+    // Empty groups = matches everything
+    const matches = groups.length === 0 || groups.every((group) => {
+      if (group.conditions.length === 0) return true
+      if (group.operator === "OR") {
+        return group.conditions.some((cond) => evaluateCondition(cond, conv, tagNames, lastMsg, attendantTeamIds))
+      }
+      return group.conditions.every((cond) => evaluateCondition(cond, conv, tagNames, lastMsg, attendantTeamIds))
+    })
 
-    // Rule matched — apply action
+    if (!matches) continue
+
+    // Rule matched — update stats (fire-and-forget)
+    db.distributionRule.update({
+      where: { id: rule.id },
+      data: { triggerCount: { increment: 1 }, lastTriggeredAt: new Date() },
+    }).catch(() => {})
+
+    // Apply action
     const result = await applyAction(rule, companyId, excludeUserId)
     if (result.userId) {
       return {
@@ -96,13 +135,13 @@ export async function resolveAttendant(
       }
     }
 
-    // Action returned null (e.g. MANUAL or no available member)
+    // Action returned null (no available member)
     if (rule.fallback === "NEXT_RULE") continue
     // Queue — if rule targets a team, return teamId so conversation lands in team queue
     if (rule.actionType === "TEAM" && rule.targetTeamId) {
       return { userId: null, teamId: rule.targetTeamId }
     }
-    return { userId: null, teamId: null } // QUEUE
+    return { userId: null, teamId: null }
   }
 
   return { userId: null, teamId: null }
@@ -112,7 +151,9 @@ function evaluateCondition(
   cond: RuleCondition,
   conv: {
     channel: string
+    instanceId: string | null
     leadValue: unknown
+    attendantId: string | null
     customer: {
       status: string
       stage: string
@@ -123,6 +164,7 @@ function evaluateCondition(
   },
   tagNames: string[],
   lastMsg: string,
+  attendantTeamIds: string[],
 ): boolean {
   const val = String(cond.value ?? "").toLowerCase()
 
@@ -131,6 +173,11 @@ function evaluateCondition(
       return cond.operator === "eq"
         ? conv.channel === cond.value
         : conv.channel !== cond.value
+
+    case "instance":
+      return cond.operator === "eq"
+        ? (conv.instanceId ?? "") === cond.value
+        : (conv.instanceId ?? "") !== cond.value
 
     case "lead_value": {
       const lv = Number(conv.leadValue ?? 0)
@@ -167,6 +214,11 @@ function evaluateCondition(
 
     case "message_contains":
       return lastMsg.toLowerCase().includes(val)
+
+    case "team": {
+      const inTeam = attendantTeamIds.includes(String(cond.value))
+      return cond.operator === "eq" ? inTeam : !inTeam
+    }
 
     default:
       return false
@@ -206,7 +258,7 @@ async function applyAction(
         select: { userId: true, leadCount: true },
         orderBy: rule.strategy === "LOWEST_LOAD"
           ? { leadCount: "asc" }
-          : { leadCount: "asc" }, // round-robin fallback also picks lowest as proxy
+          : { leadCount: "asc" },
       })
 
       if (members.length === 0) return { userId: null, teamId: rule.targetTeamId }
@@ -245,7 +297,6 @@ export async function assignConversation(
   companyId: string,
   teamId?: string | null,
 ): Promise<void> {
-  // If teamId not provided, look it up from the user's membership
   let resolvedTeamId = teamId ?? null
   if (!resolvedTeamId) {
     const membership = await db.salesTeamMember.findFirst({
@@ -260,7 +311,6 @@ export async function assignConversation(
     data: { attendantId: userId, teamId: resolvedTeamId },
   })
 
-  // Increment leadCount on the team member(s) for this user+company
   await db.salesTeamMember.updateMany({
     where: { userId, team: { companyId } },
     data: { leadCount: { increment: 1 } },

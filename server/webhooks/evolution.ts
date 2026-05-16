@@ -146,9 +146,7 @@ async function onContactsUpsert(instance: string, data: Record<string, unknown>)
     const name = c.pushName ?? c.name ?? phone
 
     await db.customer.upsert({
-      where: {
-        id: (await db.customer.findFirst({ where: { companyId, phone } }))?.id ?? "new",
-      },
+      where: { companyId_phone: { companyId, phone } },
       update: { name },
       create: {
         companyId,

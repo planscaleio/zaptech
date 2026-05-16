@@ -3,10 +3,13 @@ import { useAuth } from "@/hooks/useAuth"
 import {
   Plus, X, Trash2, GripVertical,
   ToggleLeft, ToggleRight, ChevronDown,
-  ChevronUp, Users, Loader2, Filter, Save,
+  ChevronUp, Loader2, Filter, Save,
+  Users, Zap, Activity, HelpCircle,
+  ArrowRight, CheckCircle2, AlertCircle, Layers,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { cn } from "@/lib/utils"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -23,6 +26,13 @@ interface Team {
   name: string
 }
 
+interface Connector {
+  id: string
+  name: string
+  type: string
+  status: string
+}
+
 type RuleActionType = "TEAM" | "SPECIFIC_USER" | "EXISTING_OWNER" | "QUEUE"
 type RuleStrategy   = "ROUND_ROBIN" | "LOWEST_LOAD" | "MANUAL"
 type RuleFallback   = "QUEUE" | "NEXT_RULE"
@@ -33,12 +43,18 @@ interface RuleCondition {
   value: string | number | boolean
 }
 
+interface RuleConditionGroup {
+  operator: "AND" | "OR"
+  conditions: RuleCondition[]
+}
+
 interface DistributionRule {
   id: string
   name: string
   priority: number
   active: boolean
-  conditions: RuleCondition[]
+  conditions: unknown // raw from API — may be flat or grouped
+  conditionGroups: RuleConditionGroup[]
   actionType: RuleActionType
   strategy: RuleStrategy
   fallback: RuleFallback
@@ -46,6 +62,8 @@ interface DistributionRule {
   targetUserId: string | null
   targetTeam: { id: string; name: string } | null
   targetUser: { id: string; name: string } | null
+  triggerCount: number
+  lastTriggeredAt: string | null
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -75,29 +93,61 @@ const FALLBACK_LABELS: Record<RuleFallback, string> = {
 }
 
 const CONDITION_FIELDS = [
-  { id: "channel",           label: "Canal de entrada",    type: "enum",    values: CHANNELS, valueLabels: CHANNEL_LABEL },
-  { id: "lead_value",        label: "Valor do lead (R$)",  type: "number" },
-  { id: "lead_source",       label: "Origem do lead",      type: "enum",    values: ["WHATSAPP","INSTAGRAM","SITE","CAMPANHA_CRM","WEBHOOK","EMAIL","INDICACAO","ORGANICO","OUTRO"] as const, valueLabels: { WHATSAPP:"WhatsApp",INSTAGRAM:"Instagram",SITE:"Site",CAMPANHA_CRM:"Campanha CRM",WEBHOOK:"Webhook",EMAIL:"E-mail",INDICACAO:"Indicação",ORGANICO:"Orgânico",OUTRO:"Outro" } },
-  { id: "customer_status",   label: "Status do cliente",   type: "enum",    values: ["QUENTE","NUTRICAO","EM_ANALISE","CLIENTE","INATIVO","PERDIDO"] as const, valueLabels: { QUENTE:"Quente",NUTRICAO:"Nutrição",EM_ANALISE:"Em análise",CLIENTE:"Cliente",INATIVO:"Inativo",PERDIDO:"Perdido" } },
-  { id: "customer_stage",    label: "Etapa do funil",      type: "enum",    values: ["PROSPECCAO","QUALIFICACAO","DEMONSTRACAO","PROPOSTA","NEGOCIACAO","FECHADO","POS_VENDA"] as const, valueLabels: { PROSPECCAO:"Prospecção",QUALIFICACAO:"Qualificação",DEMONSTRACAO:"Demonstração",PROPOSTA:"Proposta",NEGOCIACAO:"Negociação",FECHADO:"Fechado",POS_VENDA:"Pós-venda" } },
-  { id: "tag",               label: "Tag da conversa",     type: "string" },
-  { id: "customer_existing", label: "Cliente já atendido", type: "boolean" },
-  { id: "message_contains",  label: "Mensagem contém",     type: "string" },
+  { id: "channel",           label: "Canal de entrada",       type: "enum",      values: CHANNELS, valueLabels: CHANNEL_LABEL },
+  { id: "instance",          label: "Instância (número WA)",  type: "connector" },
+  { id: "lead_value",        label: "Valor do lead (R$)",     type: "number" },
+  { id: "lead_source",       label: "Origem do lead",         type: "enum",      values: ["WHATSAPP","INSTAGRAM","SITE","CAMPANHA_CRM","WEBHOOK","EMAIL","INDICACAO","ORGANICO","OUTRO"] as const, valueLabels: { WHATSAPP:"WhatsApp",INSTAGRAM:"Instagram",SITE:"Site",CAMPANHA_CRM:"Campanha CRM",WEBHOOK:"Webhook",EMAIL:"E-mail",INDICACAO:"Indicação",ORGANICO:"Orgânico",OUTRO:"Outro" } },
+  { id: "customer_status",   label: "Status do cliente",      type: "enum",      values: ["QUENTE","NUTRICAO","EM_ANALISE","CLIENTE","INATIVO","PERDIDO"] as const, valueLabels: { QUENTE:"Quente",NUTRICAO:"Nutrição",EM_ANALISE:"Em análise",CLIENTE:"Cliente",INATIVO:"Inativo",PERDIDO:"Perdido" } },
+  { id: "customer_stage",    label: "Etapa do funil",         type: "enum",      values: ["PROSPECCAO","QUALIFICACAO","DEMONSTRACAO","PROPOSTA","NEGOCIACAO","FECHADO","POS_VENDA"] as const, valueLabels: { PROSPECCAO:"Prospecção",QUALIFICACAO:"Qualificação",DEMONSTRACAO:"Demonstração",PROPOSTA:"Proposta",NEGOCIACAO:"Negociação",FECHADO:"Fechado",POS_VENDA:"Pós-venda" } },
+  { id: "team",              label: "Time do atendente atual","type": "team" },
+  { id: "tag",               label: "Tag da conversa",        type: "string" },
+  { id: "customer_existing", label: "Cliente já atendido",    type: "boolean" },
+  { id: "message_contains",  label: "Mensagem contém",        type: "string" },
 ] as const
 
 const OPERATORS_BY_TYPE: Record<string, { id: string; label: string }[]> = {
-  enum:    [{ id: "eq", label: "=" }, { id: "neq", label: "≠" }],
-  number:  [{ id: "gt", label: ">" }, { id: "lt", label: "<" }, { id: "eq", label: "=" }],
-  string:  [{ id: "contains", label: "contém" }, { id: "not_contains", label: "não contém" }],
-  boolean: [{ id: "is_true", label: "sim" }, { id: "is_false", label: "não" }],
+  enum:      [{ id: "eq", label: "=" }, { id: "neq", label: "≠" }],
+  number:    [{ id: "gt", label: ">" }, { id: "lt", label: "<" }, { id: "eq", label: "=" }],
+  string:    [{ id: "contains", label: "contém" }, { id: "not_contains", label: "não contém" }],
+  boolean:   [{ id: "is_true", label: "sim" }, { id: "is_false", label: "não" }],
+  connector: [{ id: "eq", label: "=" }, { id: "neq", label: "≠" }],
+  team:      [{ id: "eq", label: "pertence a" }, { id: "neq", label: "não pertence a" }],
 }
 
-// ─── Draft state for an unsaved/editing rule ──────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function normalizeConditionGroups(raw: unknown): RuleConditionGroup[] {
+  if (!Array.isArray(raw) || raw.length === 0) return [{ operator: "AND", conditions: [] }]
+  // New format: array of objects with operator + conditions
+  if (raw[0] && typeof raw[0] === "object" && "operator" in (raw[0] as object) && "conditions" in (raw[0] as object)) {
+    return raw as RuleConditionGroup[]
+  }
+  // Legacy flat array → single AND group
+  return [{ operator: "AND", conditions: raw as RuleCondition[] }]
+}
+
+function ruleFromApi(raw: Omit<DistributionRule, "conditionGroups"> & { conditions: unknown }): DistributionRule {
+  return { ...raw, conditionGroups: normalizeConditionGroups(raw.conditions) }
+}
+
+function formatRelativeDate(iso: string | null): string {
+  if (!iso) return "nunca"
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 2) return "agora mesmo"
+  if (mins < 60) return `${mins}min atrás`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h atrás`
+  const days = Math.floor(hrs / 24)
+  return `${days}d atrás`
+}
+
+// ─── Draft state ──────────────────────────────────────────────────────────────
 
 interface RuleDraft {
-  id: string | null // null = new rule
+  id: string | null
   name: string
-  conditions: RuleCondition[]
+  conditionGroups: RuleConditionGroup[]
   actionType: RuleActionType
   targetTeamId: string
   targetUserId: string
@@ -109,7 +159,7 @@ function emptyDraft(): RuleDraft {
   return {
     id: null,
     name: "",
-    conditions: [],
+    conditionGroups: [{ operator: "AND", conditions: [] }],
     actionType: "TEAM",
     targetTeamId: "",
     targetUserId: "",
@@ -122,11 +172,13 @@ function draftFromRule(rule: DistributionRule): RuleDraft {
   return {
     id: rule.id,
     name: rule.name,
-    conditions: rule.conditions,
+    conditionGroups: rule.conditionGroups.length > 0
+      ? rule.conditionGroups
+      : [{ operator: "AND", conditions: [] }],
     actionType: rule.actionType,
     targetTeamId: rule.targetTeamId ?? "",
     targetUserId: rule.targetUserId ?? "",
-    strategy: (rule.strategy as RuleStrategy) ?? "ROUND_ROBIN",
+    strategy: rule.strategy ?? "ROUND_ROBIN",
     fallback: rule.fallback,
   }
 }
@@ -135,22 +187,30 @@ function draftFromRule(rule: DistributionRule): RuleDraft {
 
 function ConditionRow({
   cond,
+  connectors,
+  teams,
   onChange,
   onRemove,
 }: {
   cond: RuleCondition
+  connectors: Connector[]
+  teams: Team[]
   onChange: (patch: Partial<RuleCondition>) => void
   onRemove: () => void
 }) {
   const fieldDef = CONDITION_FIELDS.find((f) => f.id === cond.field)
-  const ops = OPERATORS_BY_TYPE[fieldDef?.type ?? "string"]
+  const fieldType = fieldDef?.type ?? "string"
+  const ops = OPERATORS_BY_TYPE[fieldType] ?? OPERATORS_BY_TYPE.string
 
   function handleFieldChange(field: string) {
     const def = CONDITION_FIELDS.find((f) => f.id === field)
-    const newOps = OPERATORS_BY_TYPE[def?.type ?? "string"]
+    const newType = def?.type ?? "string"
+    const newOps = OPERATORS_BY_TYPE[newType] ?? OPERATORS_BY_TYPE.string
     const defaultValue =
-      def?.type === "boolean" ? true
-      : def?.type === "number" ? 0
+      newType === "boolean" ? true
+      : newType === "number" ? 0
+      : newType === "connector" ? (connectors[0]?.name ?? "")
+      : newType === "team" ? (teams[0]?.id ?? "")
       : (def as { values?: readonly string[] } | undefined)?.values?.[0] ?? ""
     onChange({ field, operator: newOps[0].id, value: defaultValue })
   }
@@ -168,14 +228,15 @@ function ConditionRow({
       </select>
 
       <select
-        className="w-28 rounded-lg border bg-white px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
+        className="w-32 rounded-lg border bg-white px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
         value={cond.operator}
         onChange={(e) => onChange({ operator: e.target.value })}
       >
         {ops.map((op) => <option key={op.id} value={op.id}>{op.label}</option>)}
       </select>
 
-      {(!fieldDef || fieldDef.type === "string") && (
+      {/* Value input by type */}
+      {(fieldType === "string") && (
         <input
           type="text"
           className="w-36 rounded-lg border bg-white px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
@@ -184,7 +245,7 @@ function ConditionRow({
           onChange={(e) => onChange({ value: e.target.value })}
         />
       )}
-      {fieldDef?.type === "number" && (
+      {fieldType === "number" && (
         <input
           type="number"
           className="w-36 rounded-lg border bg-white px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
@@ -192,7 +253,7 @@ function ConditionRow({
           onChange={(e) => onChange({ value: Number(e.target.value) })}
         />
       )}
-      {fieldDef?.type === "enum" && (
+      {fieldType === "enum" && (
         <select
           className="w-36 rounded-lg border bg-white px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
           value={String(cond.value)}
@@ -205,7 +266,7 @@ function ConditionRow({
           ))}
         </select>
       )}
-      {fieldDef?.type === "boolean" && (
+      {fieldType === "boolean" && (
         <select
           className="w-20 rounded-lg border bg-white px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
           value={String(cond.value)}
@@ -215,9 +276,185 @@ function ConditionRow({
           <option value="false">Não</option>
         </select>
       )}
+      {fieldType === "connector" && (
+        <select
+          className="w-40 rounded-lg border bg-white px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
+          value={String(cond.value)}
+          onChange={(e) => onChange({ value: e.target.value })}
+        >
+          {connectors.length === 0
+            ? <option value="">Nenhuma instância</option>
+            : connectors.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)
+          }
+        </select>
+      )}
+      {fieldType === "team" && (
+        <select
+          className="w-40 rounded-lg border bg-white px-2.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ring"
+          value={String(cond.value)}
+          onChange={(e) => onChange({ value: e.target.value })}
+        >
+          {teams.length === 0
+            ? <option value="">Nenhum time</option>
+            : teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)
+          }
+        </select>
+      )}
 
       <button onClick={onRemove} className="ml-auto text-muted-foreground hover:text-red-500 transition-colors">
         <X className="size-3.5" />
+      </button>
+    </div>
+  )
+}
+
+// ─── Condition groups editor ──────────────────────────────────────────────────
+
+function ConditionGroupsEditor({
+  groups,
+  connectors,
+  teams,
+  onChange,
+}: {
+  groups: RuleConditionGroup[]
+  connectors: Connector[]
+  teams: Team[]
+  onChange: (groups: RuleConditionGroup[]) => void
+}) {
+  function addGroup() {
+    onChange([...groups, { operator: "AND", conditions: [] }])
+  }
+
+  function removeGroup(gi: number) {
+    onChange(groups.filter((_, i) => i !== gi))
+  }
+
+  function setGroupOperator(gi: number, op: "AND" | "OR") {
+    const next = groups.map((g, i) => i === gi ? { ...g, operator: op } : g)
+    onChange(next)
+  }
+
+  function addCondition(gi: number) {
+    const next = groups.map((g, i) =>
+      i === gi
+        ? { ...g, conditions: [...g.conditions, { field: "channel", operator: "eq", value: "WHATSAPP" }] }
+        : g
+    )
+    onChange(next)
+  }
+
+  function updateCondition(gi: number, ci: number, patch: Partial<RuleCondition>) {
+    const next = groups.map((g, i) =>
+      i === gi
+        ? { ...g, conditions: g.conditions.map((c, j) => j === ci ? { ...c, ...patch } : c) }
+        : g
+    )
+    onChange(next)
+  }
+
+  function removeCondition(gi: number, ci: number) {
+    const next = groups.map((g, i) =>
+      i === gi
+        ? { ...g, conditions: g.conditions.filter((_, j) => j !== ci) }
+        : g
+    )
+    onChange(next)
+  }
+
+  return (
+    <div className="space-y-2">
+      {groups.map((group, gi) => (
+        <div key={gi}>
+          {/* AND separator between groups */}
+          {gi > 0 && (
+            <div className="flex items-center gap-2 py-1.5">
+              <div className="h-px flex-1 bg-border" />
+              <span className="rounded border bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">E também</span>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+          )}
+
+          {/* Group card */}
+          <div className="rounded-lg border bg-muted/10 p-2.5 space-y-2">
+            {/* Group header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Grupo {gi + 1}</span>
+                <span className="text-[10px] text-muted-foreground">—</span>
+                <div className="flex rounded-md border bg-white overflow-hidden text-[10px]">
+                  <button
+                    className={cn("px-2 py-0.5 font-semibold transition-colors", group.operator === "AND" ? "bg-primary text-white" : "text-muted-foreground hover:bg-muted/50")}
+                    onClick={() => setGroupOperator(gi, "AND")}
+                  >
+                    E (AND)
+                  </button>
+                  <button
+                    className={cn("px-2 py-0.5 font-semibold transition-colors", group.operator === "OR" ? "bg-amber-500 text-white" : "text-muted-foreground hover:bg-muted/50")}
+                    onClick={() => setGroupOperator(gi, "OR")}
+                  >
+                    OU (OR)
+                  </button>
+                </div>
+                <span className="text-[10px] text-muted-foreground">entre condições</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => addCondition(gi)}
+                  className="flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"
+                >
+                  <Plus className="size-3" /> Condição
+                </button>
+                {groups.length > 1 && (
+                  <button onClick={() => removeGroup(gi)} className="text-muted-foreground/50 hover:text-red-500 transition-colors">
+                    <X className="size-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Conditions */}
+            {group.conditions.length === 0 ? (
+              <div className="flex items-center gap-2 rounded-lg border border-dashed bg-white px-3 py-2 text-xs text-muted-foreground">
+                <Filter className="size-3.5 opacity-40" />
+                {groups.length === 1 ? "Sem condições — aplica-se a todas as conversas" : "Sem condições — grupo sempre verdadeiro"}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                {group.conditions.map((cond, ci) => (
+                  <div key={ci} className="flex items-center gap-2">
+                    {ci > 0 && (
+                      <span className={cn(
+                        "shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase",
+                        group.operator === "OR"
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-primary/10 text-primary"
+                      )}>
+                        {group.operator === "OR" ? "OU" : "E"}
+                      </span>
+                    )}
+                    <div className={cn("flex-1", ci > 0 && "")}>
+                      <ConditionRow
+                        cond={cond}
+                        connectors={connectors}
+                        teams={teams}
+                        onChange={(patch) => updateCondition(gi, ci, patch)}
+                        onRemove={() => removeCondition(gi, ci)}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+
+      {/* Add group */}
+      <button
+        onClick={addGroup}
+        className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground hover:text-primary transition-colors"
+      >
+        <Plus className="size-3" /> Adicionar grupo de condições
       </button>
     </div>
   )
@@ -229,6 +466,7 @@ function RuleEditor({
   draft,
   teams,
   users,
+  connectors,
   saving,
   error,
   onChange,
@@ -238,25 +476,13 @@ function RuleEditor({
   draft: RuleDraft
   teams: Team[]
   users: TeamUser[]
+  connectors: Connector[]
   saving: boolean
   error: string | null
   onChange: (patch: Partial<RuleDraft>) => void
   onSave: () => void
   onCancel: () => void
 }) {
-  function addCondition() {
-    onChange({ conditions: [...draft.conditions, { field: "channel", operator: "eq", value: "WHATSAPP" }] })
-  }
-
-  function updateCondition(i: number, patch: Partial<RuleCondition>) {
-    const next = draft.conditions.map((c, idx) => idx === i ? { ...c, ...patch } : c)
-    onChange({ conditions: next })
-  }
-
-  function removeCondition(i: number) {
-    onChange({ conditions: draft.conditions.filter((_, idx) => idx !== i) })
-  }
-
   return (
     <div className="space-y-5 p-4">
 
@@ -272,40 +498,20 @@ function RuleEditor({
         />
       </div>
 
-      {/* Condições */}
+      {/* Condições por grupos */}
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Condições <span className="normal-case font-normal">(todas precisam ser verdadeiras)</span>
-          </label>
-          <button
-            onClick={addCondition}
-            className="flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
-          >
-            <Plus className="size-3" /> Adicionar
-          </button>
-        </div>
-
-        {draft.conditions.length === 0 ? (
-          <div className="flex items-center gap-2 rounded-lg border border-dashed bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
-            <Filter className="size-3.5 opacity-40" />
-            Sem condições — esta regra se aplica a todas as conversas
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {draft.conditions.map((cond, i) => (
-              <ConditionRow
-                key={i}
-                cond={cond}
-                onChange={(patch) => updateCondition(i, patch)}
-                onRemove={() => removeCondition(i)}
-              />
-            ))}
-          </div>
-        )}
+        <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Condições <span className="normal-case font-normal">(grupos são sempre combinados com E)</span>
+        </label>
+        <ConditionGroupsEditor
+          groups={draft.conditionGroups}
+          connectors={connectors}
+          teams={teams}
+          onChange={(groups) => onChange({ conditionGroups: groups })}
+        />
       </div>
 
-      {/* Ação + configuração */}
+      {/* Ação + Fallback */}
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1.5">
           <label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Ação</label>
@@ -392,17 +598,21 @@ function RuleEditor({
   )
 }
 
-// ─── Rule card (collapsed view) ───────────────────────────────────────────────
+// ─── Rule card preview helpers ────────────────────────────────────────────────
 
-function getRulePreview(rule: DistributionRule): string {
-  if (rule.conditions.length === 0) return "Aplica-se a todas as conversas"
-  return rule.conditions.map((c) => {
-    const field = CONDITION_FIELDS.find((f) => f.id === c.field)
-    const fl = field?.label ?? c.field
-    const vl = (field as { valueLabels?: Record<string, string> } | undefined)?.valueLabels?.[String(c.value)] ?? String(c.value)
-    const op = c.operator === "eq" ? "=" : c.operator === "neq" ? "≠" : c.operator === "gt" ? ">" : c.operator === "lt" ? "<" : c.operator
-    return `${fl} ${op} ${vl}`
-  }).join(" · ")
+function getRuleConditionSummary(rule: DistributionRule): string {
+  const groups = rule.conditionGroups
+  if (groups.length === 0 || groups.every((g) => g.conditions.length === 0)) {
+    return "Todas as conversas"
+  }
+  const allConds = groups.flatMap((g) => g.conditions)
+  const first = allConds[0]
+  const fieldDef = CONDITION_FIELDS.find((f) => f.id === first.field)
+  const fl = fieldDef?.label ?? first.field
+  const vl = (fieldDef as { valueLabels?: Record<string, string> } | undefined)?.valueLabels?.[String(first.value)] ?? String(first.value)
+  const op = first.operator === "eq" ? "=" : first.operator === "neq" ? "≠" : first.operator === "gt" ? ">" : first.operator === "lt" ? "<" : first.operator
+  const rest = allConds.length - 1
+  return rest > 0 ? `${fl} ${op} ${vl} +${rest}` : `${fl} ${op} ${vl}`
 }
 
 function getRuleAction(rule: DistributionRule): string {
@@ -420,13 +630,14 @@ export default function DistribuicaoPage() {
   const [rules, setRules] = useState<DistributionRule[]>([])
   const [teams, setTeams] = useState<Team[]>([])
   const [users, setUsers] = useState<TeamUser[]>([])
+  const [connectors, setConnectors] = useState<Connector[]>([])
   const [loading, setLoading] = useState(true)
 
-  // which rule id is expanded (null = none, "new" = new rule form at top)
   const [expanded, setExpanded] = useState<string | "new" | null>(null)
   const [draft, setDraft] = useState<RuleDraft>(emptyDraft())
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [helpOpen, setHelpOpen] = useState(false)
 
   const dragId = useRef<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
@@ -438,9 +649,13 @@ export default function DistribuicaoPage() {
       fetch(`/api/teams/rules?companyId=${companyId}`).then((r) => r.json()),
       fetch(`/api/teams?companyId=${companyId}`).then((r) => r.json()),
       fetch(`/api/teams/users?companyId=${companyId}`).then((r) => r.json()),
+      fetch(`/api/teams/connectors?companyId=${companyId}`).then((r) => r.json()),
     ])
-      .then(([r, t, u]: [DistributionRule[], Team[], TeamUser[]]) => {
-        setRules(r); setTeams(t); setUsers(u)
+      .then(([r, t, u, c]) => {
+        setRules((r as Parameters<typeof ruleFromApi>[0][]).map(ruleFromApi))
+        setTeams(t)
+        setUsers(u)
+        setConnectors(c)
       })
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -470,7 +685,7 @@ export default function DistribuicaoPage() {
       const body = {
         companyId,
         name: draft.name.trim(),
-        conditions: draft.conditions,
+        conditions: draft.conditionGroups,
         actionType: draft.actionType,
         targetTeamId: draft.actionType === "TEAM" ? draft.targetTeamId || null : null,
         targetUserId: draft.actionType === "SPECIFIC_USER" ? draft.targetUserId || null : null,
@@ -482,10 +697,11 @@ export default function DistribuicaoPage() {
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error ?? "Erro ao salvar")
+      const normalized = ruleFromApi(data)
       setRules((prev) => {
-        const idx = prev.findIndex((r) => r.id === data.id)
-        if (idx >= 0) { const next = [...prev]; next[idx] = data; return next }
-        return [...prev, data]
+        const idx = prev.findIndex((r) => r.id === normalized.id)
+        if (idx >= 0) { const next = [...prev]; next[idx] = normalized; return next }
+        return [...prev, normalized]
       })
       closeEditor()
     } catch (e: unknown) {
@@ -516,19 +732,12 @@ export default function DistribuicaoPage() {
     })
   }
 
-  function handleDragStart(id: string) {
-    dragId.current = id
-  }
-
+  function handleDragStart(id: string) { dragId.current = id }
   function handleDragOver(e: React.DragEvent, overId: string) {
     e.preventDefault()
     if (dragId.current !== overId) setDragOverId(overId)
   }
-
-  function handleDragEnd() {
-    setDragOverId(null)
-    dragId.current = null
-  }
+  function handleDragEnd() { setDragOverId(null); dragId.current = null }
 
   async function handleDrop(toId: string) {
     setDragOverId(null)
@@ -553,9 +762,12 @@ export default function DistribuicaoPage() {
     await persistReorder(reordered)
   }
 
+  const totalTriggers = rules.reduce((s, r) => s + (r.triggerCount ?? 0), 0)
+
   return (
+    <>
     <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
-      <div className="grid h-full min-w-[900px] grid-cols-[260px_minmax(500px,1fr)] gap-2.5 p-2.5 md:p-3">
+      <div className="grid h-full min-w-[960px] grid-cols-[260px_minmax(500px,1fr)] gap-2.5 p-2.5 md:p-3">
 
         {/* ── Left: info panel ── */}
         <aside className="flex min-h-0 flex-col gap-2.5 overflow-y-auto">
@@ -566,9 +778,9 @@ export default function DistribuicaoPage() {
             </div>
             <div className="p-3 space-y-3">
               {[
-                { n: "1", title: "Condições verificadas", desc: "Canal, origem, valor, status do cliente e muito mais." },
-                { n: "2", title: "Primeira regra que bater", desc: "Regras avaliadas em ordem de prioridade." },
-                { n: "3", title: "Atribuição automática", desc: "Lead vai para equipe ou atendente definido." },
+                { n: "1", title: "Condições verificadas", desc: "Canal, instância, origem, valor, time e muito mais." },
+                { n: "2", title: "Lógica AND / OR", desc: "Grupos de condições — misture E / OU dentro de cada grupo." },
+                { n: "3", title: "Primeira regra que bater", desc: "Regras avaliadas em ordem de prioridade." },
                 { n: "4", title: "Fallback configurável", desc: "Se ninguém disponível: fila ou próxima regra." },
               ].map(({ n, title, desc }) => (
                 <div key={n} className="flex gap-2.5">
@@ -606,13 +818,14 @@ export default function DistribuicaoPage() {
             </div>
             <div className="divide-y">
               {[
-                { label: "Total de regras",    value: String(rules.length) },
-                { label: "Ativas",             value: String(rules.filter((r) => r.active).length), highlight: true },
-                { label: "Equipes cadastradas", value: String(teams.length) },
-              ].map(({ label, value, highlight }) => (
+                { icon: <Filter className="size-3 text-muted-foreground" />, label: "Total de regras",     value: String(rules.length) },
+                { icon: <Zap className="size-3 text-emerald-500" />,         label: "Ativas",              value: String(rules.filter((r) => r.active).length), highlight: "text-emerald-600" },
+                { icon: <Users className="size-3 text-muted-foreground" />,  label: "Equipes cadastradas", value: String(teams.length) },
+                { icon: <Activity className="size-3 text-primary" />,        label: "Acionamentos totais", value: String(totalTriggers), highlight: "text-primary" },
+              ].map(({ icon, label, value, highlight }) => (
                 <div key={label} className="flex items-center justify-between px-3 py-2 text-xs">
-                  <span className="text-muted-foreground">{label}</span>
-                  <span className={cn("font-semibold", highlight && "text-emerald-600")}>{value}</span>
+                  <span className="flex items-center gap-1.5 text-muted-foreground">{icon}{label}</span>
+                  <span className={cn("font-semibold", highlight)}>{value}</span>
                 </div>
               ))}
             </div>
@@ -624,7 +837,7 @@ export default function DistribuicaoPage() {
           <div className="flex shrink-0 items-center justify-between border-b bg-muted/20 px-3 py-2.5">
             <div>
               <p className="text-xs font-semibold">Regras de distribuição</p>
-              <p className="text-[10px] text-muted-foreground">Clique em uma regra para editar · Arraste para reordenar</p>
+              <p className="text-[10px] text-muted-foreground">Clique para editar · Arraste para reordenar · Suporta AND / OR</p>
             </div>
             <Button size="sm" className="h-7 gap-1 text-xs" onClick={openNew} disabled={expanded === "new"}>
               <Plus className="size-3" /> Nova regra
@@ -639,11 +852,20 @@ export default function DistribuicaoPage() {
                 <div className="flex items-center gap-2 border-b bg-primary/5 px-3 py-2">
                   <div className="size-2 rounded-full bg-primary" />
                   <p className="text-xs font-semibold text-primary">Nova regra</p>
+                  <button
+                    onClick={() => setHelpOpen(true)}
+                    className="ml-auto flex items-center gap-1.5 rounded-md border border-primary/20 bg-white px-2 py-1 text-[11px] font-medium text-primary/80 transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
+                    title="Como criar regras"
+                  >
+                    <HelpCircle className="size-3" />
+                    Ajuda
+                  </button>
                 </div>
                 <RuleEditor
                   draft={draft}
                   teams={teams}
                   users={users}
+                  connectors={connectors}
                   saving={saving}
                   error={saveError}
                   onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
@@ -688,14 +910,14 @@ export default function DistribuicaoPage() {
                     {/* Card header */}
                     <div
                       className={cn(
-                        "flex items-center gap-2.5 px-3 py-2.5",
+                        "flex items-start gap-2.5 px-3 py-2.5",
                         !isEditing && "cursor-pointer hover:bg-muted/20 transition-colors"
                       )}
                       onClick={() => !isEditing ? openEdit(rule) : undefined}
                     >
                       {/* Drag handle + move buttons */}
                       {!isEditing && (
-                        <div className="flex shrink-0 flex-col items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex shrink-0 flex-col items-center gap-0.5 pt-0.5" onClick={(e) => e.stopPropagation()}>
                           <button
                             disabled={i === 0}
                             onClick={() => moveRule(rule.id, -1)}
@@ -716,11 +938,12 @@ export default function DistribuicaoPage() {
                         </div>
                       )}
 
-                      <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold text-muted-foreground">
+                      <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold text-muted-foreground mt-0.5">
                         {i + 1}
                       </span>
 
                       <div className="min-w-0 flex-1">
+                        {/* Row 1: name + status */}
                         <div className="flex items-center gap-1.5">
                           <p className="truncate text-xs font-semibold">{rule.name}</p>
                           <span className={cn(
@@ -730,15 +953,33 @@ export default function DistribuicaoPage() {
                             {rule.active ? "ativa" : "inativa"}
                           </span>
                         </div>
+
                         {!isEditing && (
-                          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                            {getRulePreview(rule)}{" "}
-                            <span className="font-medium text-primary/70">{getRuleAction(rule)}</span>
-                          </p>
+                          <>
+                            {/* Row 2: conditions + action */}
+                            <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                              {getRuleConditionSummary(rule)}
+                              {" "}
+                              <span className="font-medium text-primary/70">{getRuleAction(rule)}</span>
+                              {" · "}
+                              <span className="text-muted-foreground/60">{FALLBACK_LABELS[rule.fallback]}</span>
+                            </p>
+                            {/* Row 3: stats */}
+                            <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/60">
+                              <Activity className="size-2.5" />
+                              <span>{rule.triggerCount ?? 0} acionamentos</span>
+                              {rule.lastTriggeredAt && (
+                                <>
+                                  <span>·</span>
+                                  <span>última: {formatRelativeDate(rule.lastTriggeredAt)}</span>
+                                </>
+                              )}
+                            </p>
+                          </>
                         )}
                       </div>
 
-                      <div className="flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex shrink-0 items-center gap-1 mt-0.5" onClick={(e) => e.stopPropagation()}>
                         <button onClick={() => toggleRule(rule.id)} title={rule.active ? "Desativar" : "Ativar"}>
                           {rule.active
                             ? <ToggleRight className="size-4 text-primary" />
@@ -748,7 +989,7 @@ export default function DistribuicaoPage() {
                           <Trash2 className="size-3.5" />
                         </button>
                         {!isEditing && (
-                          <ChevronDown className="size-3.5 text-muted-foreground/40 rotate-0" />
+                          <ChevronDown className="size-3.5 text-muted-foreground/40" />
                         )}
                       </div>
                     </div>
@@ -761,6 +1002,7 @@ export default function DistribuicaoPage() {
                           draft={draft}
                           teams={teams}
                           users={users}
+                          connectors={connectors}
                           saving={saving}
                           error={saveError}
                           onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
@@ -777,5 +1019,224 @@ export default function DistribuicaoPage() {
         </section>
       </div>
     </div>
+
+    {/* ── Help Sheet ── */}
+
+    <Sheet open={helpOpen} onOpenChange={setHelpOpen} className="w-full max-w-[560px]">
+      <SheetContent>
+        <SheetHeader className="mb-6 flex-col items-stretch gap-2">
+          <SheetTitle className="flex items-center gap-2 text-base">
+            <span className="flex size-7 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <HelpCircle className="size-4" />
+            </span>
+            Como criar regras de distribuição
+          </SheetTitle>
+          <p className="text-sm text-muted-foreground">
+            Entenda como funcionam as regras para direcionar leads automaticamente ao vendedor ou equipe certa.
+          </p>
+        </SheetHeader>
+
+        <div className="space-y-6 pb-8">
+
+          {/* Como funciona */}
+          <section className="space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <Layers className="size-4 text-primary" />
+              Como as regras funcionam
+            </h3>
+            <div className="space-y-2 rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
+              <p>As regras são avaliadas em <strong className="text-foreground">ordem de prioridade</strong> (de cima para baixo). A <strong className="text-foreground">primeira regra que corresponder</strong> à conversa é aplicada — as demais são ignoradas.</p>
+              <div className="mt-3 flex flex-col gap-1.5 text-xs">
+                {[
+                  "Regra 1 — verifica condições → bate? Aplica e para.",
+                  "Regra 2 — só avaliada se a regra 1 não bateu.",
+                  "Regra 3 — avaliada se as anteriores não bateram.",
+                  "Sem match → lead vai para a fila geral.",
+                ].map((s, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[9px] font-bold text-primary">{i + 1}</span>
+                    <span>{s}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+
+          {/* Condições */}
+          <section className="space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <Filter className="size-4 text-amber-500" />
+              Condições — filtrando conversas
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              Condições determinam <strong className="text-foreground">quando</strong> a regra se aplica. Se não adicionar nenhuma condição, a regra se aplica a <em>todas</em> as conversas.
+            </p>
+
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Lógica dentro de um grupo</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg border bg-primary/5 p-3 text-xs">
+                  <p className="font-semibold text-primary">E (AND)</p>
+                  <p className="mt-1 text-muted-foreground">Todas as condições precisam ser verdadeiras ao mesmo tempo.</p>
+                  <p className="mt-2 rounded bg-white px-2 py-1 font-mono text-[10px]">Canal = WhatsApp<br /><strong>E</strong> Valor &gt; 50.000</p>
+                </div>
+                <div className="rounded-lg border bg-amber-50 p-3 text-xs">
+                  <p className="font-semibold text-amber-700">OU (OR)</p>
+                  <p className="mt-1 text-muted-foreground">Basta uma das condições ser verdadeira.</p>
+                  <p className="mt-2 rounded bg-white px-2 py-1 font-mono text-[10px]">Status = Quente<br /><strong>OU</strong> Etapa = Negociação</p>
+                </div>
+              </div>
+              <div className="rounded-lg border border-dashed bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+                <strong className="text-foreground">Grupos</strong> são sempre combinados com <strong className="text-foreground">E</strong> entre si. Use múltiplos grupos para combinar AND e OR na mesma regra.
+              </div>
+            </div>
+          </section>
+
+          {/* Ações */}
+          <section className="space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <ArrowRight className="size-4 text-emerald-600" />
+              Ações — o que acontece quando a regra bate
+            </h3>
+            <div className="divide-y rounded-xl border overflow-hidden text-sm">
+              {[
+                { label: "Atribuir a equipe", desc: "Distribui o lead para um membro da equipe conforme a estratégia (rodízio ou menor carteira).", color: "bg-emerald-50 text-emerald-700" },
+                { label: "Atendente específico", desc: "Direciona sempre para o mesmo vendedor, independente de carga de trabalho.", color: "bg-blue-50 text-blue-700" },
+                { label: "Dono da conta", desc: "Se o cliente já tem um atendente responsável, a conversa vai direto para ele.", color: "bg-violet-50 text-violet-700" },
+                { label: "Fila geral", desc: "Nenhuma atribuição automática — o gestor distribui manualmente.", color: "bg-muted text-muted-foreground" },
+              ].map(({ label, desc, color }) => (
+                <div key={label} className="flex items-start gap-3 bg-white px-3 py-2.5">
+                  <span className={cn("mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold", color)}>{label}</span>
+                  <p className="text-xs text-muted-foreground">{desc}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Fallback */}
+          <section className="space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <AlertCircle className="size-4 text-orange-500" />
+              Fallback — o que fazer se a ação falhar
+            </h3>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-lg border bg-orange-50 p-3">
+                <p className="font-semibold text-orange-700">Fila geral</p>
+                <p className="mt-1 text-muted-foreground">Se nenhum atendente estiver disponível, o lead fica na fila aguardando atribuição manual.</p>
+              </div>
+              <div className="rounded-lg border bg-sky-50 p-3">
+                <p className="font-semibold text-sky-700">Tentar próxima regra</p>
+                <p className="mt-1 text-muted-foreground">Se a ação falhar, o sistema avalia a próxima regra na lista.</p>
+              </div>
+            </div>
+          </section>
+
+          {/* Exemplos */}
+          <section className="space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <CheckCircle2 className="size-4 text-primary" />
+              Exemplos práticos
+            </h3>
+
+            <div className="space-y-3">
+              {[
+                {
+                  title: "Leads enterprise para especialista",
+                  tag: "TEAM",
+                  tagColor: "bg-emerald-100 text-emerald-700",
+                  conditions: [
+                    "Canal = WhatsApp",
+                    "Valor do lead > R$ 25.000",
+                  ],
+                  logic: "E",
+                  action: "→ Equipe Enterprise · Rodízio",
+                  fallback: "Tentar próxima regra",
+                },
+                {
+                  title: "Clientes quentes ou em negociação",
+                  tag: "SPECIFIC_USER",
+                  tagColor: "bg-blue-100 text-blue-700",
+                  conditions: [
+                    "Status do cliente = Quente",
+                    "Etapa do funil = Negociação",
+                  ],
+                  logic: "OU",
+                  action: "→ Maria Silva (atendente específica)",
+                  fallback: "Fila geral",
+                },
+                {
+                  title: "Mensagens do Instagram para SDR",
+                  tag: "TEAM",
+                  tagColor: "bg-emerald-100 text-emerald-700",
+                  conditions: [
+                    "Canal = Instagram",
+                  ],
+                  logic: "—",
+                  action: "→ Equipe SDR · Menor carteira",
+                  fallback: "Fila geral",
+                },
+                {
+                  title: "Instância VIP → vendedor sênior",
+                  tag: "SPECIFIC_USER",
+                  tagColor: "bg-blue-100 text-blue-700",
+                  conditions: [
+                    "Instância = numero-vip",
+                    "Status do cliente ≠ Em análise",
+                  ],
+                  logic: "E",
+                  action: "→ Carlos Souza (atendente específico)",
+                  fallback: "Tentar próxima regra",
+                },
+              ].map((ex) => (
+                <div key={ex.title} className="rounded-xl border bg-white overflow-hidden text-xs">
+                  <div className="flex items-center gap-2 border-b bg-muted/20 px-3 py-2">
+                    <p className="font-semibold">{ex.title}</p>
+                    <span className={cn("ml-auto shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold", ex.tagColor)}>
+                      {ex.tag === "TEAM" ? "Equipe" : "Atendente"}
+                    </span>
+                  </div>
+                  <div className="px-3 py-2.5 space-y-2">
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Condições ({ex.logic})</p>
+                      {ex.conditions.map((c) => (
+                        <div key={c} className="flex items-center gap-1.5">
+                          <span className="size-1 shrink-0 rounded-full bg-primary/40" />
+                          <span className="text-muted-foreground">{c}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-3 border-t pt-2">
+                      <span className="font-medium text-emerald-700">{ex.action}</span>
+                      <span className="ml-auto text-muted-foreground/60">Fallback: {ex.fallback}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Dicas */}
+          <section className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-2">
+            <p className="text-xs font-semibold text-primary">Boas práticas</p>
+            <ul className="space-y-1.5 text-xs text-muted-foreground">
+              {[
+                "Coloque regras mais específicas no topo — elas têm prioridade sobre as genéricas.",
+                "Use 'Tentar próxima regra' no fallback para criar cascatas de distribuição.",
+                "Uma regra sem condições captura tudo — ideal como regra padrão no final da lista.",
+                "Use o campo 'Instância' para separar leads por número de WhatsApp (ex: número VIP vs. número geral).",
+                "Combine grupos: Grupo 1 com AND filtra o perfil, Grupo 2 com OR flexibiliza o status.",
+              ].map((tip) => (
+                <li key={tip} className="flex items-start gap-2">
+                  <CheckCircle2 className="mt-0.5 size-3 shrink-0 text-primary/60" />
+                  {tip}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+        </div>
+      </SheetContent>
+    </Sheet>
+    </>
   )
 }
