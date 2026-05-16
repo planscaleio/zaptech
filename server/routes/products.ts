@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express"
+import { parse } from "csv-parse/sync"
 import { db } from "../db.js"
 
 const router = Router()
@@ -9,6 +10,123 @@ function normalizeMoney(value: unknown, fallback = 0) {
   if (!Number.isFinite(n) || n < 0) return fallback.toFixed(2)
   return n.toFixed(2)
 }
+
+// POST /products/import?companyId=
+router.post("/import", async (req: Request, res: Response) => {
+  const { companyId } = req.query
+  const { csv, type } = req.body ?? {}
+  if (!companyId || typeof companyId !== "string")
+    return res.status(400).json({ error: "companyId é obrigatório" })
+  if (!csv || typeof csv !== "string")
+    return res.status(400).json({ error: "CSV é obrigatório" })
+  if (type !== "products" && type !== "categories")
+    return res.status(400).json({ error: "type deve ser 'products' ou 'categories'" })
+
+  let records: Record<string, string>[]
+  try {
+    records = parse(csv, {
+      columns: true,
+      skip_empty_lines: true,
+      trim: true,
+      bom: true,
+      delimiter: ",",
+    })
+  } catch (err) {
+    return res.status(400).json({ error: `CSV inválido: ${err instanceof Error ? err.message : String(err)}` })
+  }
+
+  if (records.length === 0)
+    return res.json({ created: 0, updated: 0, errors: [] })
+
+  const errors: string[] = []
+
+  if (type === "categories") {
+    let created = 0
+    let updated = 0
+    for (const row of records) {
+      const name = (row.nome || row.name || "").trim()
+      if (!name) { errors.push(`Linha sem nome: ${JSON.stringify(row)}`); continue }
+      const description = (row.descricao || row.description || "").trim() || null
+      const status = (row.status || "ATIVO").toUpperCase() === "INATIVO" ? "INATIVO" : "ATIVO"
+      const result = await db.productCategory.upsert({
+        where: { companyId_name: { companyId, name } },
+        create: { companyId, name, description, status },
+        update: { description, status },
+      })
+      if (result.createdAt.getTime() === result.updatedAt.getTime()) created++
+      else updated++
+    }
+    return res.json({ created, updated, errors })
+  }
+
+  // type === "products"
+  // 1. Auto-create categories from "categoria" column (upsert)
+  const categoryNames = [...new Set(
+    records.map((r) => (r.categoria || r.category || "").trim()).filter(Boolean)
+  )]
+  if (categoryNames.length > 0) {
+    for (const name of categoryNames) {
+      await db.productCategory.upsert({
+        where: { companyId_name: { companyId, name } },
+        create: { companyId, name, status: "ATIVO" },
+        update: {},
+      })
+    }
+  }
+  const categoryMap = new Map(
+    (await db.productCategory.findMany({
+      where: { companyId, name: { in: categoryNames } },
+      select: { id: true, name: true },
+    })).map((c) => [c.name.toLowerCase(), c.id])
+  )
+
+  // 2. Determine next auto-SKU number
+  const existingSkus = await db.catalogProduct.findMany({
+    where: { companyId, sku: { startsWith: "PROD-" } },
+    select: { sku: true },
+    take: 1,
+    orderBy: { sku: "desc" },
+  })
+  let autoSkuN = 0
+  if (existingSkus.length > 0) {
+    const match = existingSkus[0].sku?.match(/PROD-(\d+)/)
+    if (match) autoSkuN = parseInt(match[1], 10)
+  }
+
+  // 3. Upsert products
+  let created = 0
+  let updated = 0
+  for (const row of records) {
+    const name = (row.nome || row.name || "").trim()
+    if (!name) { errors.push(`Linha sem nome: ${JSON.stringify(row)}`); continue }
+    const rawSku = (row.sku || "").trim()
+    const catName = (row.categoria || row.category || "").trim()
+    const categoryId = catName ? categoryMap.get(catName.toLowerCase()) ?? null : null
+    const productData = {
+      name,
+      description: (row.descricao || row.description || "").trim() || null,
+      unit: (row.unidade || row.unit || "un").trim() || "un",
+      price: normalizeMoney(row.preco || row.price || 0),
+      categoryId,
+      status: (row.status || "ATIVO").toUpperCase() === "INATIVO" ? "INATIVO" : "ATIVO",
+    }
+
+    if (rawSku) {
+      const result = await db.catalogProduct.upsert({
+        where: { companyId_sku: { companyId, sku: rawSku } },
+        create: { companyId, sku: rawSku, ...productData },
+        update: productData,
+      })
+      if (result.createdAt.getTime() === result.updatedAt.getTime()) created++
+      else updated++
+    } else {
+      const sku = `PROD-${String(++autoSkuN).padStart(3, "0")}`
+      await db.catalogProduct.create({ data: { companyId, sku, ...productData } })
+      created++
+    }
+  }
+  return res.json({ created, updated, errors })
+})
 
 router.get("/", async (req: Request, res: Response) => {
   const { companyId, q, status, categoryId } = req.query

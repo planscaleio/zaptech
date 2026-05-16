@@ -7,7 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Package, Plus, Pencil, Search, Tag, X } from "lucide-react"
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { Package, Plus, Pencil, Search, Tag, X, Upload, FileDown, Download } from "lucide-react"
 
 type Status = "ATIVO" | "INATIVO"
 
@@ -53,6 +54,93 @@ export default function ProdutosPage() {
 
   const [productForm, setProductForm] = useState(emptyProductForm)
   const [editingProductId, setEditingProductId] = useState<string | null>(null)
+
+  const [importOpen, setImportOpen] = useState<"products" | "categories" | null>(null)
+  const [importCsv, setImportCsv] = useState("")
+  const [importLoading, setImportLoading] = useState(false)
+  const [importResult, setImportResult] = useState<{ created: number; updated: number; errors: string[] } | null>(null)
+
+  const csvTemplateCategories = "nome,descricao,status\nEletrônicos,Dispositivos e acessórios,ATIVO\nVestuário,Roupas e acessórios,ATIVO"
+  const csvTemplateProducts = "nome,sku,descricao,unidade,preco,categoria,status\niPhone 15,IP15,Smartphone Apple,un,8999.90,Eletrônicos,ATIVO\nCamiseta Básica,CAM01,Camiseta algodão,un,49.90,Vestuário,ATIVO"
+
+  function downloadTemplate(type: "products" | "categories") {
+    const csv = type === "categories" ? csvTemplateCategories : csvTemplateProducts
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = type === "categories" ? "modelo_categorias.csv" : "modelo_produtos.csv"
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => setImportCsv(reader.result as string)
+    reader.readAsText(file, "utf-8")
+  }
+
+  async function runImport(type: "products" | "categories") {
+    if (!importCsv.trim()) return
+    setImportLoading(true)
+    setImportResult(null)
+    try {
+      const res = await fetch(`/api/products/import?companyId=${companyId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv: importCsv, type }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error ?? "Erro na importação"); return }
+      setImportResult(data)
+      refresh()
+    } catch {
+      setError("Erro na importação")
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
+  function closeImport() {
+    setImportOpen(null)
+    setImportCsv("")
+    setImportResult(null)
+  }
+
+  function csvEscape(value: string) {
+    if (/[,"\n\r]/.test(value)) return `"${value.replace(/"/g, '""')}"`
+    return value
+  }
+
+  function exportProductsCsv() {
+    const header = "nome,sku,descricao,unidade,preco,categoria,status"
+    const rows = filteredProducts.map((p) =>
+      [p.name, p.sku ?? "", p.description ?? "", p.unit, p.price, p.category?.name ?? "", p.status]
+        .map((v) => csvEscape(String(v)))
+        .join(",")
+    )
+    downloadCsv(header + "\n" + rows.join("\n"), "produtos.csv")
+  }
+
+  function exportCategoriesCsv() {
+    const header = "nome,descricao,status"
+    const rows = categories.map((c) =>
+      [c.name, c.description ?? "", c.status].map((v) => csvEscape(String(v))).join(",")
+    )
+    downloadCsv(header + "\n" + rows.join("\n"), "categorias.csv")
+  }
+
+  function downloadCsv(content: string, filename: string) {
+    const blob = new Blob(["﻿" + content], { type: "text/csv;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   function refresh() {
     if (!companyId) return
@@ -268,14 +356,22 @@ export default function ProdutosPage() {
                     <CardTitle className="text-sm">Catálogo</CardTitle>
                     <CardDescription className="text-[11px]">Produtos ativos e inativos da empresa</CardDescription>
                   </div>
-                  <div className="flex h-8 w-64 items-center gap-2 rounded-md border px-2">
-                    <Search className="size-3.5 text-muted-foreground" />
-                    <input
-                      className="min-w-0 flex-1 bg-transparent text-xs outline-none"
-                      placeholder="Buscar produto"
-                      value={productSearch}
-                      onChange={(e) => setProductSearch(e.target.value)}
-                    />
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-56 items-center gap-2 rounded-md border px-2">
+                      <Search className="size-3.5 text-muted-foreground" />
+                      <input
+                        className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+                        placeholder="Buscar produto"
+                        value={productSearch}
+                        onChange={(e) => setProductSearch(e.target.value)}
+                      />
+                    </div>
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setImportOpen("products")}>
+                      <Upload className="size-3.5" />Importar
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={exportProductsCsv} disabled={filteredProducts.length === 0}>
+                      <Download className="size-3.5" />Exportar
+                    </Button>
                   </div>
                 </div>
               </CardHeader>
@@ -394,8 +490,20 @@ export default function ProdutosPage() {
             </Card>
             <Card className="flex min-h-0 flex-col overflow-hidden">
               <CardHeader className="p-3 pb-2">
-                <CardTitle className="text-sm">Categorias</CardTitle>
-                <CardDescription className="text-[11px]">Organização do catálogo comercial</CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-sm">Categorias</CardTitle>
+                    <CardDescription className="text-[11px]">Organização do catálogo comercial</CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setImportOpen("categories")}>
+                      <Upload className="size-3.5" />Importar
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={exportCategoriesCsv} disabled={categories.length === 0}>
+                      <Download className="size-3.5" />Exportar
+                    </Button>
+                  </div>
+                </div>
               </CardHeader>
               <CardContent className="min-h-0 flex-1 overflow-auto p-0">
                 {loading && <p className="py-6 text-center text-xs text-muted-foreground">Carregando…</p>}
@@ -446,6 +554,50 @@ export default function ProdutosPage() {
           </div>
         </TabsContent>
       </Tabs>
+
+      <Sheet open={!!importOpen} onClose={closeImport} className="w-[35vw]">
+        <SheetHeader>
+          <div className="min-w-0 flex-1">
+            <SheetTitle>Importar {importOpen === "categories" ? "categorias" : "produtos"}</SheetTitle>
+            <SheetDescription>Cole o CSV ou faça upload de um arquivo</SheetDescription>
+          </div>
+          <button className="text-muted-foreground hover:text-foreground" onClick={closeImport}><X className="size-5" /></button>
+        </SheetHeader>
+        <SheetContent className="space-y-3">
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={() => importOpen && downloadTemplate(importOpen)}>
+              <FileDown className="size-3.5" />Baixar modelo
+            </Button>
+            <label className="inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium hover:bg-muted">
+              <Upload className="size-3.5" />Upload arquivo
+              <input type="file" accept=".csv,.txt" className="hidden" onChange={handleFileUpload} />
+            </label>
+          </div>
+          <textarea
+            className="min-h-48 w-full resize-none rounded-md border bg-white px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
+            placeholder={importOpen === "categories" ? "nome,descricao,status\nEletrônicos,Dispositivos,ATIVO" : "nome,sku,descricao,unidade,preco,categoria,status\niPhone 15,IP15,Smartphone,un,8999.90,Eletrônicos,ATIVO"}
+            value={importCsv}
+            onChange={(e) => { setImportCsv(e.target.value); setImportResult(null) }}
+          />
+          {importResult && (
+            <div className="space-y-1 rounded-md border bg-muted/30 px-3 py-2 text-xs">
+              <p className="font-medium text-emerald-700">{importResult.created} criado(s)</p>
+              {importResult.updated > 0 && <p className="text-cyan-700">{importResult.updated} atualizado(s)</p>}
+              {importResult.errors.length > 0 && (
+                <div className="mt-1 space-y-0.5">
+                  {importResult.errors.map((err, i) => <p key={i} className="text-red-600">{err}</p>)}
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={closeImport}>Fechar</Button>
+            <Button size="sm" className="h-8 text-xs" disabled={!importCsv.trim() || importLoading} onClick={() => importOpen && runImport(importOpen)}>
+              {importLoading ? "Importando…" : "Importar"}
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   )
 }
