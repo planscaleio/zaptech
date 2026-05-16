@@ -86,26 +86,18 @@ async function processInbound(inbound: {
 
   const { convId, messageId, isNew } = await db.$transaction(async (tx) => {
     // 1. Upsert Customer
-    const existing = await tx.customer.findFirst({
-      where: { companyId: inbound.companyId, phone: inbound.senderPhone },
-      select: { id: true },
+    const customer = await tx.customer.upsert({
+      where: { companyId_phone: { companyId: inbound.companyId, phone: inbound.senderPhone } },
+      update: { name: pushName || inbound.senderPhone, lastContactAt: timestamp },
+      create: {
+        companyId: inbound.companyId,
+        name: pushName || inbound.senderPhone,
+        phone: inbound.senderPhone,
+        status: "EM_ANALISE",
+        stage: "QUALIFICACAO",
+        lastContactAt: timestamp,
+      },
     })
-
-    const customer = existing
-      ? await tx.customer.update({
-          where: { id: existing.id },
-          data: { name: pushName || inbound.senderPhone, lastContactAt: timestamp },
-        })
-      : await tx.customer.create({
-          data: {
-            companyId: inbound.companyId,
-            name: pushName || inbound.senderPhone,
-            phone: inbound.senderPhone,
-            status: "EM_ANALISE",
-            stage: "QUALIFICACAO",
-            lastContactAt: timestamp,
-          },
-        })
 
     // 2. Upsert Conversation (reuse open one, else create)
     const existingConv = await tx.conversation.findFirst({
@@ -128,6 +120,7 @@ async function processInbound(inbound: {
             companyId: inbound.companyId,
             customerId: customer.id,
             channel: "WHATSAPP",
+            instanceId: inbound.instanceId,
             status: "EM_ANALISE",
             preview: text.slice(0, 200) || msgType,
             lastMessageAt: timestamp,

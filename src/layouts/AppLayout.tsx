@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Outlet, NavLink, useLocation, Navigate } from "react-router-dom"
 import { useAuth } from "@/hooks/useAuth"
+import { useTeam } from "@/contexts/TeamContext"
 import { useUnreadCount, useEmailUnreadCount } from "@/hooks/useUnreadCount"
 import { clearStoredAuth, redirectToLogin } from "@/lib/auth"
 import { navItems, viewCopy, type ViewId } from "@/lib/nav"
@@ -16,6 +17,8 @@ import {
   Sparkles,
   ChevronDown,
   ChevronRight,
+  Users,
+  Check,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -229,9 +232,23 @@ function SidebarPlanCard() {
 export default function AppLayout() {
   const auth = useAuth()
   const [agentsOpen, setAgentsOpen] = useState(false)
+  const [teamOpen, setTeamOpen] = useState(false)
+  const teamDropdownRef = useRef<HTMLDivElement>(null)
+  const { myTeams, activeTeamId, setActiveTeamId } = useTeam()
   const { count: unreadCount } = useUnreadCount()
   const { count: emailUnreadCount } = useEmailUnreadCount()
   const location = useLocation()
+
+  useEffect(() => {
+    if (!teamOpen) return
+    function handleClick(e: MouseEvent) {
+      if (teamDropdownRef.current && !teamDropdownRef.current.contains(e.target as Node)) {
+        setTeamOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [teamOpen])
 
   useEffect(() => {
     if (!auth) return
@@ -372,6 +389,61 @@ export default function AppLayout() {
                     </div>
                   )}
                 </div>
+
+                {/* Team switcher — only shown when user belongs to 2+ teams */}
+                {myTeams.length >= 2 && (
+                  <div className="relative" ref={teamDropdownRef}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={cn(
+                        "h-12 gap-2 rounded-lg border-primary/20 bg-white px-2.5 py-2 shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/5",
+                        teamOpen && "border-primary/40 bg-primary/5",
+                      )}
+                      onClick={() => setTeamOpen((o) => !o)}
+                    >
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                        <Users className="size-3.5" />
+                      </span>
+                      <span className="hidden max-w-28 truncate text-xs sm:inline">
+                        {activeTeamId ? (myTeams.find((t) => t.id === activeTeamId)?.name ?? "Time") : "Todos os times"}
+                      </span>
+                      <ChevronDown className={cn("size-3.5 text-muted-foreground transition-transform", teamOpen && "rotate-180")} />
+                    </Button>
+
+                    {teamOpen && (
+                      <div className="absolute right-0 top-14 z-50 w-56 rounded-lg border bg-white shadow-xl">
+                        <div className="border-b px-3 py-2.5">
+                          <p className="text-xs font-semibold">Atender como</p>
+                          <p className="text-[11px] text-muted-foreground">Filtra a fila por time</p>
+                        </div>
+                        <div className="py-1">
+                          <button
+                            className="flex w-full items-center gap-2 px-3 py-2 text-xs transition-colors hover:bg-muted/40"
+                            onClick={() => { setActiveTeamId(null); setTeamOpen(false) }}
+                          >
+                            <span className="flex size-5 shrink-0 items-center justify-center">
+                              {!activeTeamId && <Check className="size-3.5 text-primary" />}
+                            </span>
+                            <span className={cn("font-medium", !activeTeamId && "text-primary")}>Todos os times</span>
+                          </button>
+                          {myTeams.map((team) => (
+                            <button
+                              key={team.id}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-xs transition-colors hover:bg-muted/40"
+                              onClick={() => { setActiveTeamId(team.id); setTeamOpen(false) }}
+                            >
+                              <span className="flex size-5 shrink-0 items-center justify-center">
+                                {activeTeamId === team.id && <Check className="size-3.5 text-primary" />}
+                              </span>
+                              <span className={cn("truncate", activeTeamId === team.id && "font-medium text-primary")}>{team.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex min-w-0 items-center gap-2.5 rounded-lg border bg-white px-2.5 py-2 shadow-sm">
                   <div className={`flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${ROLE_COLOR[auth.role] ?? "bg-slate-500 text-white"}`}>

@@ -60,18 +60,89 @@ router.get("/", async (req: Request, res: Response) => {
   })))
 })
 
+// GET /customers/duplicates — detect duplicate customers within a company
+router.get("/duplicates", async (req: Request, res: Response) => {
+  const { companyId } = req.query
+  if (!companyId || typeof companyId !== "string") {
+    return res.status(400).json({ error: "companyId é obrigatório" })
+  }
+
+  const customers = await db.customer.findMany({
+    where: { companyId },
+    select: {
+      id: true,
+      name: true,
+      phone: true,
+      email: true,
+      createdAt: true,
+      _count: { select: { conversations: true } },
+    },
+  })
+
+  type DupGroup = { field: "phone" | "email"; value: string; customers: typeof customers }
+  const groups: DupGroup[] = []
+
+  const byPhone = new Map<string, typeof customers>()
+  const byEmail = new Map<string, typeof customers>()
+
+  for (const c of customers) {
+    if (c.phone) {
+      const list = byPhone.get(c.phone) ?? []
+      list.push(c)
+      byPhone.set(c.phone, list)
+    }
+    if (c.email) {
+      const list = byEmail.get(c.email) ?? []
+      list.push(c)
+      byEmail.set(c.email, list)
+    }
+  }
+
+  for (const [value, list] of byPhone) {
+    if (list.length > 1) groups.push({ field: "phone", value, customers: list })
+  }
+  for (const [value, list] of byEmail) {
+    if (list.length > 1) groups.push({ field: "email", value, customers: list })
+  }
+
+  return res.json({ groups })
+})
+
 // POST /customers — create
 router.post("/", async (req: Request, res: Response) => {
   const { companyId, name, phone, email, document, city, companyName, segment, stage, status, source, value } = req.body ?? {}
   if (!companyId || !name?.trim()) {
     return res.status(400).json({ error: "companyId e name são obrigatórios" })
   }
+
+  const cleanPhone = phone?.trim() || null
+  const cleanEmail = email?.trim() || null
+
+  if (cleanPhone) {
+    const existing = await db.customer.findUnique({
+      where: { companyId_phone: { companyId, phone: cleanPhone } },
+      select: { id: true, name: true },
+    })
+    if (existing) {
+      return res.status(409).json({ error: "duplicate", field: "phone", existingId: existing.id, existingName: existing.name })
+    }
+  }
+  if (cleanEmail) {
+    const existing = await db.customer.findUnique({
+      where: { companyId_email: { companyId, email: cleanEmail } },
+      select: { id: true, name: true },
+    })
+    if (existing) {
+      return res.status(409).json({ error: "duplicate", field: "email", existingId: existing.id, existingName: existing.name })
+    }
+  }
+
   const customer = await db.customer.create({
     data: {
       companyId,
       name: name.trim(),
-      phone: phone?.trim() || null,
-      email: email?.trim() || null,
+      phone: cleanPhone,
+      email: cleanEmail,
       document: document?.trim() || null,
       city: city?.trim() || null,
       companyName: companyName?.trim() || null,
@@ -260,6 +331,57 @@ router.patch("/:id/vip", async (req: Request, res: Response) => {
     select: { id: true, isVip: true },
   })
   return res.json(customer)
+})
+
+// POST /customers/:id/merge — merge sourceId into primary (:id)
+router.post("/:id/merge", async (req: Request, res: Response) => {
+  const primaryId = req.params.id
+  const { sourceId } = req.body ?? {}
+  if (!sourceId || typeof sourceId !== "string") {
+    return res.status(400).json({ error: "sourceId é obrigatório" })
+  }
+  if (primaryId === sourceId) {
+    return res.status(400).json({ error: "primary e source não podem ser iguais" })
+  }
+
+  const [primary, source] = await Promise.all([
+    db.customer.findUnique({ where: { id: primaryId } }),
+    db.customer.findUnique({ where: { id: sourceId } }),
+  ])
+
+  if (!primary || !source) return res.status(404).json({ error: "Cliente não encontrado" })
+  if (primary.companyId !== source.companyId) return res.status(403).json({ error: "Clientes de empresas diferentes" })
+
+  await db.$transaction(async (tx) => {
+    // Fill null fields on primary with values from source
+    const merged: Record<string, unknown> = {}
+    for (const field of ["phone", "email", "document", "city", "companyName", "segment", "source", "value"] as const) {
+      if (primary[field] == null && source[field] != null) merged[field] = source[field]
+    }
+    if (Object.keys(merged).length > 0) {
+      await tx.customer.update({ where: { id: primaryId }, data: merged })
+    }
+
+    // Reassign all relations from source to primary
+    await tx.conversation.updateMany({ where: { customerId: sourceId }, data: { customerId: primaryId } })
+    await tx.customerTagLink.updateMany({ where: { customerId: sourceId }, data: { customerId: primaryId } })
+    await tx.customerProduct.updateMany({ where: { customerId: sourceId }, data: { customerId: primaryId } })
+    await tx.quote.updateMany({ where: { customerId: sourceId }, data: { customerId: primaryId } })
+    await tx.kanbanCard.updateMany({ where: { customerId: sourceId }, data: { customerId: primaryId } })
+    await tx.customerChatHistory.updateMany({ where: { customerId: sourceId }, data: { customerId: primaryId } })
+    await tx.customerAIFinding.updateMany({ where: { customerId: sourceId }, data: { customerId: primaryId } })
+    await tx.segmentCustomer.deleteMany({ where: { customerId: sourceId } })
+    await tx.customerAttendant.deleteMany({ where: { customerId: sourceId } })
+
+    // Delete source
+    await tx.customer.delete({ where: { id: sourceId } })
+  })
+
+  const updated = await db.customer.findUnique({
+    where: { id: primaryId },
+    select: { id: true, name: true, phone: true, email: true, status: true, stage: true },
+  })
+  return res.json(updated)
 })
 
 // POST /customers/:id/products

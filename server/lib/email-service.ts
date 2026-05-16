@@ -197,27 +197,19 @@ async function importEmailMessage(account: EmailAccountRecord, msg: { uid: numbe
   }
 
   const result = await db.$transaction(async (tx) => {
-    const existingCustomer = await tx.customer.findFirst({
-      where: { companyId: account.companyId, email: fromAddress },
-      select: { id: true },
+    const customer = await tx.customer.upsert({
+      where: { companyId_email: { companyId: account.companyId, email: fromAddress } },
+      update: { name: fromName, lastContactAt: receivedAt },
+      create: {
+        companyId: account.companyId,
+        name: fromName,
+        email: fromAddress,
+        status: "EM_ANALISE",
+        stage: "QUALIFICACAO",
+        source: "EMAIL",
+        lastContactAt: receivedAt,
+      },
     })
-
-    const customer = existingCustomer
-      ? await tx.customer.update({
-          where: { id: existingCustomer.id },
-          data: { name: fromName, lastContactAt: receivedAt },
-        })
-      : await tx.customer.create({
-          data: {
-            companyId: account.companyId,
-            name: fromName,
-            email: fromAddress,
-            status: "EM_ANALISE",
-            stage: "QUALIFICACAO",
-            source: "EMAIL",
-            lastContactAt: receivedAt,
-          },
-        })
 
     const existingConversation = await tx.conversation.findFirst({
       where: {

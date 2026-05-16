@@ -16,7 +16,7 @@ import {
   MapPin, FileText, Tag, GitBranch, CheckCircle2, MessageCircle, HelpCircle,
   Loader2, MoreHorizontal, Package, Users, Kanban, X, RefreshCw,
   ChevronRight, Calendar, DollarSign, LayoutGrid, ClipboardList,
-  ExternalLink, Link2, Unlink,
+  ExternalLink, Link2, Unlink, GitMerge,
 } from "lucide-react"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -404,7 +404,13 @@ function CreateCustomerSheet({ open, onClose, companyId, onCreated }: CreateCust
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...form, companyId }),
       })
-      if (!res.ok) { const e = await res.json(); throw new Error(e.error); }
+      if (!res.ok) {
+        const e = await res.json()
+        if (e.error === "duplicate") {
+          throw new Error(`Já existe um cliente com ${e.field === "phone" ? "este telefone" : "este e-mail"}: "${e.existingName}"`)
+        }
+        throw new Error(e.error)
+      }
       const created = await res.json()
       // fetch full summary
       const r2 = await fetch(`/api/customers?companyId=${companyId}&q=${encodeURIComponent(form.name)}`)
@@ -523,6 +529,10 @@ export default function ClientesPage() {
   const [filterStage, setFilterStage] = useState("")
   const [filterVip, setFilterVip] = useState("")
   const [createOpen, setCreateOpen] = useState(false)
+  const [dupOpen, setDupOpen] = useState(false)
+  const [dupLoading, setDupLoading] = useState(false)
+  const [dupGroups, setDupGroups] = useState<{ field: "phone" | "email"; value: string; customers: { id: string; name: string; phone: string | null; email: string | null; createdAt: string; _count: { conversations: number } }[] }[]>([])
+  const [merging, setMerging] = useState<string | null>(null)
   const [linkBaOpen, setLinkBaOpen] = useState(false)
   const [linkBaSearch, setLinkBaSearch] = useState("")
   const [linkBaResults, setLinkBaResults] = useState<{ id: string; name: string; industry: string | null; status: string }[]>([])
@@ -624,6 +634,37 @@ export default function ClientesPage() {
     setSelected((s) => s ? { ...s, products: s.products.filter((p) => p.id !== productId) } : s)
   }
 
+  async function loadDuplicates() {
+    if (!companyId) return
+    setDupLoading(true)
+    try {
+      const res = await fetch(`/api/customers/duplicates?companyId=${companyId}`)
+      const data = await res.json()
+      setDupGroups(data.groups ?? [])
+      setDupOpen(true)
+    } finally {
+      setDupLoading(false)
+    }
+  }
+
+  async function handleMerge(primaryId: string, sourceId: string) {
+    setMerging(sourceId)
+    try {
+      await fetch(`/api/customers/${primaryId}/merge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceId }),
+      })
+      setDupGroups((prev) => prev.filter((g) => !g.customers.some((c) => c.id === sourceId && g.customers.some((c2) => c2.id === primaryId)))
+        .map((g) => ({ ...g, customers: g.customers.filter((c) => c.id !== sourceId) }))
+        .filter((g) => g.customers.length > 1))
+      fetchList()
+      if (selected?.id === sourceId) setSelected(null)
+    } finally {
+      setMerging(null)
+    }
+  }
+
   const sc = selected
 
   return (
@@ -636,9 +677,15 @@ export default function ClientesPage() {
           <div className="shrink-0 border-b p-3 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-sm font-semibold">Clientes</h2>
-              <Button size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => setCreateOpen(true)}>
-                <Plus className="size-3" /> Novo
-              </Button>
+              <div className="flex gap-1">
+                <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs" onClick={loadDuplicates} disabled={dupLoading}>
+                  {dupLoading ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
+                  Duplicatas
+                </Button>
+                <Button size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => setCreateOpen(true)}>
+                  <Plus className="size-3" /> Novo
+                </Button>
+              </div>
             </div>
             <div className="flex items-center gap-1.5 rounded-md border bg-white px-2 py-1">
               <Search className="size-3.5 shrink-0 text-muted-foreground" />
@@ -1160,6 +1207,61 @@ export default function ClientesPage() {
           loadDetail(c.id)
         }}
       />
+
+      {/* Duplicates Sheet */}
+      <Sheet open={dupOpen} onOpenChange={setDupOpen}>
+        <SheetContent className="w-[520px] flex flex-col">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <GitMerge className="size-4" /> Clientes duplicados
+            </SheetTitle>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto space-y-4 pr-1 mt-4">
+            {dupGroups.length === 0 && (
+              <p className="py-8 text-center text-sm text-muted-foreground">Nenhum duplicado encontrado.</p>
+            )}
+            {dupGroups.map((group, gi) => (
+              <div key={gi} className="rounded-lg border p-3 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">
+                  {group.field === "phone" ? "Mesmo telefone" : "Mesmo e-mail"}:{" "}
+                  <span className="font-semibold text-foreground">{group.value}</span>
+                </p>
+                <div className="space-y-2">
+                  {group.customers.map((cust, ci) => (
+                    <div key={cust.id} className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{cust.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {cust.phone && <span className="mr-2">{cust.phone}</span>}
+                          {cust.email && <span className="mr-2">{cust.email}</span>}
+                          <span>{cust._count.conversations} conversa{cust._count.conversations !== 1 ? "s" : ""}</span>
+                        </p>
+                      </div>
+                      {ci > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 gap-1 px-2 text-xs shrink-0"
+                          disabled={merging === cust.id}
+                          onClick={() => handleMerge(group.customers[0].id, cust.id)}
+                        >
+                          {merging === cust.id
+                            ? <Loader2 className="size-3 animate-spin" />
+                            : <GitMerge className="size-3" />}
+                          Mesclar no principal
+                        </Button>
+                      )}
+                      {ci === 0 && (
+                        <span className="rounded bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">Principal</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Link Business Account Sheet */}
       <Sheet open={linkBaOpen} onClose={() => { setLinkBaOpen(false); setLinkBaSearch(""); setLinkBaResults([]) }} className="w-[380px]">
