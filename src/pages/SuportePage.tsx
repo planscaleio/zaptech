@@ -677,7 +677,7 @@ export default function SuportePage() {
 
       {/* ─── New ticket sheet ──────────────────────────────────────────────── */}
       <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+        <SheetContent className="w-full overflow-y-auto">
           <SheetHeader className="mb-4">
             <SheetTitle>Novo ticket de suporte</SheetTitle>
           </SheetHeader>

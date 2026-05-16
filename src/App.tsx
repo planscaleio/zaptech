@@ -3267,7 +3267,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
         )}
 
         <Sheet open={ticketModalOpen && !!selected} onOpenChange={(open) => { if (!open) { setTicketModalOpen(false); setTicketSuccess(null); setTicketError("") } }}>
-          <SheetContent className="flex w-full flex-col overflow-hidden p-0 sm:max-w-xl">
+          <SheetContent className="flex w-full flex-col overflow-hidden p-0">
             {/* Header */}
             <div className="flex shrink-0 items-center gap-3 border-b px-5 py-4">
               <span className="flex size-9 items-center justify-center rounded-xl bg-cyan-50 text-cyan-700">
@@ -3481,7 +3481,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
         </Sheet>
 
         <Sheet open={quoteModalOpen && !!selected} onOpenChange={(open) => { if (!open) setQuoteModalOpen(false) }}>
-          <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+          <SheetContent className="w-full overflow-y-auto">
             <SheetHeader className="mb-4">
               <div className="flex items-center gap-3">
                 <span className="flex size-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
@@ -3574,7 +3574,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
 
         {/* ── Transfer Sheet ────────────────────────────────────────────── */}
         <Sheet open={transferOpen && !!selected} onOpenChange={(open) => { if (!open) setTransferOpen(false) }}>
-          <SheetContent className="sm:max-w-sm">
+          <SheetContent>
             <SheetHeader>
               <div className="flex items-center gap-2">
                 <div className="flex size-8 items-center justify-center rounded-full bg-primary/10">
