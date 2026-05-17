@@ -60,6 +60,7 @@ const ROLE_COLOR: Record<string, string> = {
 }
 
 const navGroups: Array<{ label: string; items: ViewId[] }> = [
+  { label: "Comunicação", items: ["zipzap"] },
   { label: "Operação", items: ["atendimento", "emails", "quadros"] },
   { label: "CRM & Comercial", items: ["empresas", "clientes", "orcamentos", "produtos", "segmentacao", "pipelines"] },
   { label: "Suporte", items: ["suporte", "base-conhecimento", "suporte-categorias", "suporte-sla"] },
@@ -229,6 +230,16 @@ function SidebarPlanCard() {
   )
 }
 
+function SidebarRouteBehavior({ currentId }: { currentId: ViewId }) {
+  const { setOpen } = useSidebar()
+
+  useEffect(() => {
+    if (currentId === "zipzap") setOpen(false)
+  }, [currentId, setOpen])
+
+  return null
+}
+
 export default function AppLayout() {
   const auth = useAuth()
   const [agentsOpen, setAgentsOpen] = useState(false)
@@ -289,6 +300,7 @@ export default function AppLayout() {
 
   return (
     <SidebarProvider defaultOpen storageKey="zapvendas:app-sidebar:open">
+      <SidebarRouteBehavior currentId={currentId} />
       <main className="h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(14,116,144,0.10),_transparent_28rem),linear-gradient(180deg,_#f8fafc_0%,_#eef4f7_100%)]">
         <div className="flex h-screen min-h-0">
           <Sidebar>

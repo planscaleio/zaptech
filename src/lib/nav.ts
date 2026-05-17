@@ -25,6 +25,7 @@ import {
 } from "lucide-react"
 
 export const navItems = [
+  { id: "zipzap",        label: "ZipZap",               icon: MessageCircle },
   { id: "atendimento",   label: "Atendimento",          icon: MessageCircle },
   { id: "emails",        label: "E-mails",              icon: Mail },
   { id: "suporte",       label: "Tickets",              icon: LifeBuoy },
@@ -53,6 +54,11 @@ export const navItems = [
 export type ViewId = (typeof navItems)[number]["id"]
 
 export const viewCopy: Record<ViewId, { title: string; subtitle: string; action: string }> = {
+  zipzap: {
+    title: "ZipZap",
+    subtitle: "Comunicador interno para equipes e operação",
+    action: "Nova conversa",
+  },
   atendimento: {
     title: "Central de atendimento",
     subtitle: "Multiagente, multicanal e assistida por IA",

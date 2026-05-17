@@ -13,6 +13,7 @@ import LandingVendas from "@/pages/landing/LandingVendas"
 import LandingPME    from "@/pages/landing/LandingPME"
 
 import AtendimentoPage  from "@/pages/AtendimentoPage"
+import ZipZapPage       from "@/pages/ZipZapPage"
 import EmailsPage       from "@/pages/EmailsPage"
 import SuportePage      from "@/pages/SuportePage"
 import QuadrosPage      from "@/pages/QuadrosPage"
@@ -54,6 +55,7 @@ const router = createBrowserRouter([
   {
     element: <AppLayout />,
     children: [
+      { path: "zipzap",        element: <ZipZapPage /> },
       { path: "atendimento",   element: <AtendimentoPage /> },
       { path: "emails",        element: <EmailsPage /> },
       { path: "suporte",       element: <SuportePage /> },

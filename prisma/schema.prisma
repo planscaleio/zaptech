@@ -618,6 +618,7 @@ model Conversation {
   preview       String?
   lastMessageAt DateTime?
   lastReadAt    DateTime?
+  customerLastReadAt DateTime?
   transferredAt  DateTime?
   transferredBy  String?
 

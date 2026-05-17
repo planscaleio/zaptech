@@ -5,6 +5,7 @@ import { sendEmailReply } from "../lib/email-service.js"
 import { saveBase64Attachment } from "../lib/media-storage.js"
 import { resolveEvolutionInstanceId } from "../lib/evolution-instance.js"
 import { requireAuth } from "../middleware/auth.js"
+import { getPresence } from "../lib/presence.js"
 
 const router = Router()
 
@@ -529,6 +530,22 @@ router.patch("/:id/read", async (req: Request, res: Response) => {
     data:  { lastReadAt: new Date() },
   })
   return res.json({ ok: true })
+})
+
+// GET /conversations/:id/presence  → typing/recording state + customerLastReadAt
+router.get("/:id/presence", async (req: Request, res: Response) => {
+  const conv = await db.conversation.findUnique({
+    where: { id: req.params.id },
+    select: { customerLastReadAt: true, customer: { select: { phone: true } } },
+  })
+  if (!conv) return res.status(404).json({ error: "Conversa não encontrada" })
+  const phone = conv.customer?.phone ?? ""
+  const state = phone ? getPresence(phone) : null
+  return res.json({
+    presence: state,
+    typing: state === "composing" || state === "recording",
+    customerLastReadAt: conv.customerLastReadAt,
+  })
 })
 
 // PATCH /conversations/:id/status  { status, role }

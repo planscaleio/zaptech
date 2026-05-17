@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express"
 import { db } from "../db.js"
 import { jidToPhone, extractText } from "../utils/evolution.js"
+import { setPresence, type PresenceState } from "../lib/presence.js"
 
 const router = Router()
 
@@ -131,7 +132,24 @@ async function onMessagesUpsert(instance: string, data: Record<string, unknown>)
 async function onMessagesUpdate(instance: string, data: Record<string, unknown>) {
   const updates: EvoMessageUpdate[] = Array.isArray(data) ? data : [data as EvoMessageUpdate]
   for (const u of updates) {
+    const status = u.update?.status?.toUpperCase()
+    const fromMe = u.key?.fromMe
     console.log(`[${instance}] ✏️ Status de mensagem | id: ${u.key?.id} | ${u.update?.status}`)
+
+    // When the customer reads OUR outgoing message (fromMe=true → status READ),
+    // record customerLastReadAt on the conversation.
+    if (status === "READ" && fromMe && u.key?.remoteJid) {
+      const phone = jidToPhone(u.key.remoteJid)
+      if (!phone) continue
+      try {
+        await db.conversation.updateMany({
+          where: { customer: { phone } },
+          data: { customerLastReadAt: new Date() },
+        })
+      } catch (err) {
+        console.error(`[${instance}] erro ao atualizar customerLastReadAt`, err)
+      }
+    }
   }
 }
 
@@ -193,8 +211,13 @@ async function onConnectionUpdate(instance: string, data: Record<string, unknown
 
 async function onPresenceUpdate(instance: string, data: Record<string, unknown>) {
   const p = data as { id?: string; presences?: Record<string, { lastKnownPresence?: string }> }
-  const state = Object.values(p.presences ?? {})[0]?.lastKnownPresence ?? "unknown"
-  console.log(`[${instance}] 👁️ Presença | ${jidToPhone(p.id ?? "")} → ${state}`)
+  const stateRaw = Object.values(p.presences ?? {})[0]?.lastKnownPresence ?? "unknown"
+  const phone = jidToPhone(p.id ?? "")
+  console.log(`[${instance}] 👁️ Presença | ${phone} → ${stateRaw}`)
+  if (!phone) return
+  const allowed: PresenceState[] = ["composing", "recording", "available", "unavailable", "paused"]
+  const state = (allowed as string[]).includes(stateRaw) ? (stateRaw as PresenceState) : "available"
+  setPresence(phone, state)
 }
 
 async function onChatsUpsert(instance: string, data: Record<string, unknown>) {

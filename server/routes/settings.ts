@@ -18,6 +18,7 @@ router.get("/company", async (req: Request, res: Response) => {
       id: true, name: true, slug: true, status: true,
       ownerName: true, email: true, phone: true, cnpj: true, city: true,
       transferMessageUser: true, transferMessageTeam: true,
+      maxWaitMinutes: true,
       mrr: true, trialEndsAt: true, nextBilling: true,
       currentUsers: true, currentChats: true, currentAgents: true,
       plan: { select: { id: true, name: true, maxUsers: true } },

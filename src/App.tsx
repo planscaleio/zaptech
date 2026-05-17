@@ -54,6 +54,8 @@ import {
   MessageCircle,
   MoreHorizontal,
   PanelLeft,
+  PanelLeftClose,
+  PanelLeftOpen,
   Paperclip,
   Pause,
   Phone,
@@ -90,6 +92,7 @@ import { cn } from "@/lib/utils"
 import { supportCategories, supportPriorities, supportTeams, type TicketCategory, type TicketPriority } from "@/lib/supportTickets"
 import { channelMatchesRop, loadRops, ropChannelLabel, type Rop } from "@/lib/rops"
 import { formatKnowledgeChannels, htmlToPlainText, type KnowledgeArticle, type KnowledgeChannel } from "@/lib/knowledge"
+import { computeSla, SLA_GROUP_ORDER, SLA_GROUP_LABELS, SLA_GROUP_COLORS, type SlaStatus } from "@/lib/sla"
 
 const conversations = [
   {
@@ -558,6 +561,7 @@ interface ConvSummary {
   preview: string | null
   status: string
   channel: string
+  instanceId: string | null
   lastMessageAt: string | null
   createdAt: string
   leadValue: string | null
@@ -933,6 +937,56 @@ function MessageAttachments({ attachments, outgoing }: { attachments?: MessageAt
 
 // ─── SupportView ─────────────────────────────────────────────────────────────
 
+function formatDateSeparator(d: Date): string {
+  const now = new Date()
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const diffDays = Math.floor((startOfDay(now) - startOfDay(d)) / 86400000)
+  if (diffDays === 0) return "Hoje"
+  if (diffDays === 1) return "Ontem"
+  if (diffDays < 7) return d.toLocaleDateString("pt-BR", { weekday: "long" })
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: now.getFullYear() === d.getFullYear() ? undefined : "numeric" })
+}
+
+function formatMinutesShort(min: number): string {
+  if (min < 1) return "agora"
+  if (min < 60) return `${min}m`
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  if (h < 24) return m === 0 ? `${h}h` : `${h}h${m}m`
+  const d = Math.floor(h / 24)
+  return `${d}d`
+}
+
+function ToolbarAction({
+  icon: Icon, label, hint, onClick, disabled,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  hint?: string
+  onClick: () => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={hint ? `${label} (${hint})` : label}
+      className={cn(
+        "group inline-flex items-center gap-1.5 rounded-md bg-white px-2 py-1 text-[11px] font-medium text-slate-700 ring-1 ring-slate-200 transition-colors",
+        disabled ? "cursor-not-allowed opacity-40" : "hover:bg-slate-100 hover:text-slate-900",
+      )}
+    >
+      <Icon className="size-3.5" />
+      <span>{label}</span>
+      {hint && (
+        <kbd className="hidden sm:inline rounded bg-slate-100 px-1 text-[9px] font-mono text-slate-500 ring-1 ring-slate-200 group-hover:bg-white">
+          {hint}
+        </kbd>
+      )}
+    </button>
+  )
+}
+
 export function SupportView({ mode = "support" }: { mode?: "support" | "emails" }) {
   const auth = useAuth()
   const companyId = auth?.companyId
@@ -1026,6 +1080,97 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
   // Inline edit: valor potencial do cliente
   const [editingPotentialValue, setEditingPotentialValue] = useState(false)
   const [potentialValueInput, setPotentialValueInput] = useState("")
+
+  // SLA cockpit state
+  const [maxWaitMinutes, setMaxWaitMinutes] = useState<number | null>(null)
+  const [queueCollapsed, setQueueCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem("support:queueCollapsed") === "1" } catch { return false }
+  })
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<SlaStatus, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem("support:collapsedGroups")
+      if (raw) return JSON.parse(raw)
+    } catch {}
+    return { overdue: false, warning: false, ok: false, none: true }
+  })
+  const [slaTick, setSlaTick] = useState(0)
+  const [presence, setPresenceState] = useState<{ typing: boolean; customerLastReadAt: string | null }>({ typing: false, customerLastReadAt: null })
+
+  useEffect(() => {
+    try { localStorage.setItem("support:queueCollapsed", queueCollapsed ? "1" : "0") } catch {}
+  }, [queueCollapsed])
+  useEffect(() => {
+    try { localStorage.setItem("support:collapsedGroups", JSON.stringify(collapsedGroups)) } catch {}
+  }, [collapsedGroups])
+
+  // Re-render every 60s to keep SLA fresh
+  useEffect(() => {
+    const id = setInterval(() => setSlaTick((t) => t + 1), 60_000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Poll presence (typing + customer read receipt) for the open conversation
+  useEffect(() => {
+    if (!selectedId) { setPresenceState({ typing: false, customerLastReadAt: null }); return }
+    let cancelled = false
+    const tick = () => {
+      fetch(`/api/conversations/${selectedId}/presence`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (cancelled || !data) return
+          setPresenceState({ typing: !!data.typing, customerLastReadAt: data.customerLastReadAt ?? null })
+        })
+        .catch(() => {})
+    }
+    tick()
+    const id = setInterval(tick, 5000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [selectedId])
+
+  // Fetch company's maxWaitMinutes for SLA calculation
+  useEffect(() => {
+    if (!companyId) return
+    fetch(`/api/settings/company?companyId=${companyId}`)
+      .then((r) => r.json())
+      .then((data) => { if (data && typeof data.maxWaitMinutes === "number") setMaxWaitMinutes(data.maxWaitMinutes) })
+      .catch(() => {})
+  }, [companyId])
+
+  const toggleGroup = useCallback((g: SlaStatus) => {
+    setCollapsedGroups((prev) => ({ ...prev, [g]: !prev[g] }))
+  }, [])
+
+  // Keyboard shortcuts for cockpit actions (ignored when typing in inputs)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const target = e.target as HTMLElement | null
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return
+      const sel = selectedRef.current
+      if (!sel) return
+      const key = e.key.toLowerCase()
+      switch (key) {
+        case "r": e.preventDefault(); replyTextareaRef.current?.focus(); break
+        case "t": e.preventDefault(); openTransferModal(); break
+        case "o": e.preventDefault(); openOpportunityModal(); break
+        case "q":
+          if (sel.channel !== "EMAIL") { e.preventDefault(); openQuoteModal() }
+          break
+        case "c": e.preventDefault(); openTicketModal(); break
+        case "i": e.preventDefault(); openCustomerHistory(); break
+        case "a": e.preventDefault(); setAiDropdownOpen((v) => !v); break
+        case "e":
+          e.preventDefault()
+          if (!["ARQUIVADO","PARA_EXCLUIR"].includes(sel.status)) updateConvStatus(sel.id, "ARQUIVADO")
+          else if (sel.status === "ARQUIVADO") updateConvStatus(sel.id, "EM_ANALISE")
+          break
+        case "?": e.preventDefault(); setHelpOpen(true); break
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Tags currently applied on the selected conversation (derived + writable)
   const appliedTagNames = useMemo(
@@ -2048,6 +2193,17 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
       .catch(() => setCustomerHistoryLoading(false))
   }
 
+  // Auto-load customer history inline whenever the selected conversation changes
+  useEffect(() => {
+    if (!selected?.customer.id || !companyId) return
+    setCustomerHistoryLoading(true)
+    const params = new URLSearchParams({ companyId })
+    fetch(`/api/conversations/customer/${selected.customer.id}?${params.toString()}`)
+      .then((r) => r.json())
+      .then((data) => { setCustomerHistoryData(data); setCustomerHistoryLoading(false) })
+      .catch(() => setCustomerHistoryLoading(false))
+  }, [selected?.customer.id, companyId])
+
   // Load all company tags when manual tag popover opens
   useEffect(() => {
     if (!manualTagOpen || !companyId) return
@@ -2061,39 +2217,63 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
 
   return (
     <div className="min-h-0 flex-1 overflow-x-auto overflow-y-hidden">
-      <div className="grid h-full min-w-[1120px] grid-cols-[320px_minmax(500px,1fr)_285px] gap-2.5 p-2.5 md:p-3">
+      <div
+        className="grid h-full min-w-[1180px] gap-2.5 p-2.5 md:p-3"
+        style={{ gridTemplateColumns: `${queueCollapsed ? "56px" : "300px"} minmax(500px,1fr) 360px` }}
+      >
 
         {/* Left — conversation list */}
         <section className="flex min-h-0 flex-col gap-3 overflow-hidden">
           <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <CardHeader className="p-3 pb-2">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <CardTitle>
-                    {isEmailView
-                      ? showArchived ? "E-mails arquivados" : "Caixa de entrada"
-                      : showArchived ? "Conversas arquivadas" : "Fila inteligente"}
-                  </CardTitle>
-                  <CardDescription className="text-[11px]">
-                    {isEmailView
-                      ? showArchived ? "E-mails fora da fila ativa" : "E-mails de clientes para atendimento"
-                      : showArchived ? "Arquivadas e marcadas para exclusão" : "Priorizada por intenção e SLA"}
-                  </CardDescription>
-                </div>
-                <button
-                  onClick={() => { setShowArchived((v) => !v); setConvSearch(""); setTagFilter(null); setConvFilter("all") }}
-                  title={showArchived ? "Ver fila ativa" : "Ver arquivadas"}
-                  className={cn(
-                    "flex size-7 items-center justify-center rounded-lg transition-colors",
-                    showArchived
-                      ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
-                      : "text-muted-foreground hover:bg-muted"
-                  )}
-                >
-                  {showArchived ? <ArchiveX className="size-4" /> : <Archive className="size-4" />}
-                </button>
+            <CardHeader className={cn("p-3 pb-2", queueCollapsed && "px-2")}>
+              <div className="flex items-center justify-between gap-2">
+                {queueCollapsed ? (
+                  <button
+                    onClick={() => setQueueCollapsed(false)}
+                    title="Expandir fila"
+                    className="mx-auto flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  >
+                    <PanelLeftOpen className="size-4" />
+                  </button>
+                ) : (
+                  <>
+                    <div className="min-w-0">
+                      <CardTitle>
+                        {isEmailView
+                          ? showArchived ? "E-mails arquivados" : "Caixa de entrada"
+                          : showArchived ? "Conversas arquivadas" : "Fila inteligente"}
+                      </CardTitle>
+                      <CardDescription className="text-[11px]">
+                        {isEmailView
+                          ? showArchived ? "E-mails fora da fila ativa" : "E-mails de clientes para atendimento"
+                          : showArchived ? "Arquivadas e marcadas para exclusão" : "Priorizada por intenção e SLA"}
+                      </CardDescription>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => { setShowArchived((v) => !v); setConvSearch(""); setTagFilter(null); setConvFilter("all") }}
+                        title={showArchived ? "Ver fila ativa" : "Ver arquivadas"}
+                        className={cn(
+                          "flex size-7 items-center justify-center rounded-lg transition-colors",
+                          showArchived
+                            ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                            : "text-muted-foreground hover:bg-muted"
+                        )}
+                      >
+                        {showArchived ? <ArchiveX className="size-4" /> : <Archive className="size-4" />}
+                      </button>
+                      <button
+                        onClick={() => setQueueCollapsed(true)}
+                        title="Recolher fila"
+                        className="flex size-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                      >
+                        <PanelLeftClose className="size-4" />
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
-              {!isEmailView && (
+              {!queueCollapsed && !isEmailView && (
                 <Select value={convFilter} onValueChange={(v) => { setConvFilter(v); setConvSearch(""); setTagFilter(null) }}>
                   <SelectTrigger className="h-7 text-xs border-dashed">
                     <SelectValue placeholder="Todas as conversas" />
@@ -2112,6 +2292,7 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                   </SelectContent>
                 </Select>
               )}
+              {!queueCollapsed && (
               <div className="grid grid-cols-[1fr_auto] gap-2 pt-2">
                 <div className="flex h-8 min-w-0 items-center gap-2 rounded-md border bg-white px-2">
                   <Search className="size-3.5 text-muted-foreground" />
@@ -2184,49 +2365,97 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                   )}
                 </div>
               </div>
+              )}
             </CardHeader>
-            <CardContent className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3 pt-0 pr-2">
+            <CardContent className={cn("min-h-0 flex-1 overflow-y-auto p-3 pt-0", queueCollapsed ? "space-y-1 px-1" : "space-y-2 pr-2")}>
               {loadingList && (
                 <p className="py-6 text-center text-xs text-muted-foreground">Carregando…</p>
               )}
               {!loadingList && convList.length === 0 && (
                 <p className="py-6 text-center text-xs text-muted-foreground">Nenhuma conversa ainda.</p>
               )}
-              {convList
-                .filter((c) => showArchived
-                  ? ["ARQUIVADO", "PARA_EXCLUIR"].includes(c.status)
-                  : !["ARQUIVADO", "PARA_EXCLUIR"].includes(c.status)
-                )
-                .filter((c) => !tagFilter || c.tags.some((t) => t.name === tagFilter))
-                .filter((c) => {
-                  if (!convSearch.trim()) return true
-                  const q = convSearch.toLowerCase()
-                  return (
-                    c.customer.name.toLowerCase().includes(q) ||
-                    (c.customer.phone ?? "").includes(q) ||
-                    (c.customer.email ?? "").toLowerCase().includes(q) ||
-                    (c.preview ?? "").toLowerCase().includes(q)
+              {(() => {
+                // Filter pipeline (preserves existing behavior)
+                const filtered = convList
+                  .filter((c) => showArchived
+                    ? ["ARQUIVADO", "PARA_EXCLUIR"].includes(c.status)
+                    : !["ARQUIVADO", "PARA_EXCLUIR"].includes(c.status)
                   )
-                })
-                .map((conv) => {
+                  .filter((c) => !tagFilter || c.tags.some((t) => t.name === tagFilter))
+                  .filter((c) => {
+                    if (!convSearch.trim()) return true
+                    const q = convSearch.toLowerCase()
+                    return (
+                      c.customer.name.toLowerCase().includes(q) ||
+                      (c.customer.phone ?? "").includes(q) ||
+                      (c.customer.email ?? "").toLowerCase().includes(q) ||
+                      (c.preview ?? "").toLowerCase().includes(q)
+                    )
+                  })
+
+                // Compute SLA per conv (slaTick keeps it fresh)
+                void slaTick
+                const withSla = filtered.map((c) => ({ conv: c, sla: computeSla(c.lastMessageAt, maxWaitMinutes) }))
+
+                // Collapsed mode: flat list of avatars + SLA dot
+                if (queueCollapsed) {
+                  return withSla.map(({ conv, sla }) => {
+                    const selectedConv = selectedId === conv.id
+                    const colors = SLA_GROUP_COLORS[sla.status]
+                    return (
+                      <button
+                        key={conv.id}
+                        onClick={() => loadDetail(conv.id)}
+                        title={`${conv.customer.name} · ${sla.label}`}
+                        className={cn(
+                          "relative flex w-full items-center justify-center rounded-lg p-1.5 transition-colors hover:bg-muted/60",
+                          selectedConv && "bg-primary/10 ring-1 ring-primary/30",
+                        )}
+                      >
+                        <CustomerAvatar customer={conv.customer} className="size-8" />
+                        <span className={cn("absolute bottom-0.5 right-0.5 size-2 rounded-full ring-2 ring-white", colors.dot)} />
+                        {conv.hasUnread && !selectedConv && (
+                          <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-amber-500 ring-2 ring-white" />
+                        )}
+                      </button>
+                    )
+                  })
+                }
+
+                // Group by SLA (only for active queue, not archived)
+                const groupable = !showArchived
+                const groups: Record<SlaStatus, typeof withSla> = { overdue: [], warning: [], ok: [], none: [] }
+                if (groupable) {
+                  for (const item of withSla) groups[item.sla.status].push(item)
+                } else {
+                  groups.none = withSla
+                }
+
+                const renderItem = ({ conv, sla }: { conv: ConvSummary; sla: ReturnType<typeof computeSla> }) => {
                   const contact = isEmailView
                     ? conv.customer.email ?? conv.customer.phone ?? "Sem e-mail"
                     : conv.customer.phone ?? conv.customer.email ?? "Sem contato"
                   const selectedConv = selectedId === conv.id
                   const primaryTag = conv.tags[0]
+                  const slaColors = SLA_GROUP_COLORS[sla.status]
+                  const transferredRecent =
+                    conv.transferredAt && (Date.now() - new Date(conv.transferredAt).getTime()) < 15 * 60_000
 
                   return (
                     <div
                       key={conv.id}
                       className={cn(
-                        "group relative w-full cursor-pointer rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors hover:bg-muted/45",
+                        "group relative w-full cursor-pointer overflow-hidden rounded-lg border border-transparent pl-3 pr-2.5 py-2 text-left transition-colors hover:bg-muted/45",
                         selectedConv && "border-primary/30 bg-primary/5",
-                        conv.hasUnread && !selectedConv && "border-l-2 border-l-amber-500 bg-amber-50/30",
+                        conv.hasUnread && !selectedConv && "bg-amber-50/30",
                         conv.status === "PARA_EXCLUIR" && "border-red-200 bg-red-50/40",
                         conv.customer.isVip && !selectedConv && "bg-amber-50/25",
                       )}
                       onClick={() => loadDetail(conv.id)}
                     >
+                      {/* SLA color bar */}
+                      <span className={cn("absolute left-0 top-0 bottom-0 w-[3px]", slaColors.bar)} aria-hidden="true" />
+
                       <div className="min-w-0 border-b pb-1 group-last:border-b-0">
                         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
                           <div className="min-w-0">
@@ -2252,6 +2481,13 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                           {conv.aiReason && <Sparkles className="mt-0.5 size-3 shrink-0 text-cyan-600" />}
                         </div>
 
+                        {transferredRecent && (
+                          <div className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue-50 px-1.5 py-0.5 text-[9px] font-medium text-blue-700 ring-1 ring-blue-200">
+                            <ArrowRightLeft className="size-2.5" />
+                            Recebida há {Math.max(1, Math.floor((Date.now() - new Date(conv.transferredAt!).getTime()) / 60_000))}m
+                          </div>
+                        )}
+
                         <div className="mt-1 flex items-center gap-1">
                           <span className={cn(
                             "size-1.5 rounded-full",
@@ -2261,6 +2497,11 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                               : "bg-slate-300",
                           )} />
                           <span className="truncate text-[9px] text-muted-foreground">{statusLabel(conv.status)}</span>
+                          {sla.status !== "none" && (
+                            <span className={cn("truncate rounded px-1 py-0.5 text-[9px] font-medium", slaColors.bg, slaColors.text)}>
+                              {sla.label}
+                            </span>
+                          )}
                           {primaryTag && (
                             <span className="truncate rounded bg-muted px-1 py-0.5 text-[9px] text-muted-foreground">#{primaryTag.name}</span>
                           )}
@@ -2355,7 +2596,35 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                       </div>
                     </div>
                   )
-                })}
+                }
+
+                return SLA_GROUP_ORDER.map((g) => {
+                  const items = groups[g]
+                  if (!items || items.length === 0) return null
+                  const isCollapsed = collapsedGroups[g]
+                  const colors = SLA_GROUP_COLORS[g]
+                  return (
+                    <div key={g} className="space-y-1">
+                      {groupable && (
+                        <button
+                          onClick={() => toggleGroup(g)}
+                          className="flex w-full items-center gap-2 px-1.5 py-1 text-left transition-colors hover:bg-muted/40 rounded-md"
+                        >
+                          <ChevronRight className={cn("size-3 text-muted-foreground transition-transform", !isCollapsed && "rotate-90")} />
+                          <span className={cn("size-2 rounded-full", colors.dot)} />
+                          <span className={cn("text-[11px] font-semibold uppercase tracking-wide", colors.text)}>
+                            {SLA_GROUP_LABELS[g]}
+                          </span>
+                          <span className="ml-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                            {items.length}
+                          </span>
+                        </button>
+                      )}
+                      {!isCollapsed && <div className="space-y-1.5">{items.map(renderItem)}</div>}
+                    </div>
+                  )
+                })
+              })()}
             </CardContent>
           </Card>
         </section>
@@ -2382,232 +2651,360 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
             </div>
           ) : selected ? (
             <>
-              <div className="flex shrink-0 flex-wrap items-center gap-2.5 border-b p-3">
-                <CustomerAvatar customer={selected.customer} className="size-10" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="truncate text-base font-semibold">{selected.customer.name}</h2>
-                    {selected.customer.isVip && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700 ring-1 ring-amber-300/60">
-                        <Crown className="size-3" />VIP
-                      </span>
-                    )}
-                    <Badge variant={statusToVariant(selected.status)}>{statusLabel(selected.status)}</Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    {(isEmailView ? selected.customer.email ?? selected.customer.phone : selected.customer.phone ?? selected.customer.email) ?? "Sem contato"} · {channelLabel(selected.channel)}
-                  </p>
-                </div>
-                {/* Manual tag popover */}
-                <div className="relative" ref={manualTagRef}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => { setManualTagOpen((v) => !v); setManualTagSearch(""); setNewTagName("") }}
-                    className="gap-1.5"
-                  >
-                    <Tags className="size-3.5" />
-                    Tags
-                    {(selected?.tags ?? []).length > 0 && (
-                      <span className="ml-0.5 flex size-4 items-center justify-center rounded-full bg-violet-100 text-[10px] font-bold text-violet-700">
-                        {(selected?.tags ?? []).length}
-                      </span>
-                    )}
-                  </Button>
-                  {manualTagOpen && (
-                    <div className="absolute left-0 top-full z-50 mt-1.5 w-64 overflow-hidden rounded-xl border bg-white shadow-lg">
-                      {/* search + create */}
-                      <div className="p-2 border-b">
-                        <div className="flex items-center gap-1.5 rounded-lg border bg-muted/30 px-2.5 py-1.5">
-                          <Search className="size-3 shrink-0 text-muted-foreground" />
-                          <input
-                            autoFocus
-                            className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-                            placeholder="Buscar ou criar tag…"
-                            value={manualTagSearch}
-                            onChange={(e) => { setManualTagSearch(e.target.value); setNewTagName(e.target.value) }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                const exact = allCompanyTags.find((t) => t.name === newTagName.trim().toLowerCase().replace(/\s+/g, "-"))
-                                if (exact) applyTagDirect(exact)
-                                else createAndApplyTag(newTagName)
-                                setManualTagOpen(false)
-                              }
-                            }}
-                          />
-                        </div>
-                      </div>
+              {(() => {
+                const headerSla = computeSla(selected.lastMessageAt, maxWaitMinutes)
+                const slaColors = SLA_GROUP_COLORS[headerSla.status]
+                const contact = isEmailView
+                  ? selected.customer.email ?? selected.customer.phone
+                  : selected.customer.phone ?? selected.customer.email
+                const isArchived = ["ARQUIVADO","PARA_EXCLUIR"].includes(selected.status)
 
-                      {/* tag list */}
-                      <div className="max-h-52 overflow-y-auto py-1">
-                        {allCompanyTags
-                          .filter((t) => !manualTagSearch || t.name.includes(manualTagSearch.toLowerCase()))
-                          .map((tag) => {
-                            const isOn = appliedTagNames.has(tag.name)
-                            return (
-                              <button
-                                key={tag.id}
-                                onClick={() => applyTagDirect(tag)}
-                                className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
-                              >
-                                <span className={cn(
-                                  "flex size-4 shrink-0 items-center justify-center rounded border text-[10px] transition-colors",
-                                  isOn ? "border-violet-500 bg-violet-500 text-white" : "border-muted-foreground/30"
-                                )}>
-                                  {isOn && "✓"}
-                                </span>
-                                <span className="text-xs font-medium text-foreground">#{tag.name}</span>
-                              </button>
-                            )
-                          })}
-                        {allCompanyTags.filter((t) => !manualTagSearch || t.name.includes(manualTagSearch.toLowerCase())).length === 0 && (
-                          <p className="px-3 py-2 text-xs text-muted-foreground">Nenhuma tag encontrada.</p>
+                return (
+              <div className="flex shrink-0 flex-col gap-2 border-b bg-slate-50/60 px-3 pt-2.5 pb-2">
+                {/* Row 1 — identity */}
+                <div className="flex items-start gap-2.5">
+                  <CustomerAvatar customer={selected.customer} className="size-11" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="truncate text-base font-semibold leading-tight">{selected.customer.name}</h2>
+                      {selected.customer.isVip && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-300/60">
+                          <Crown className="size-3" />VIP
+                        </span>
+                      )}
+                      <Badge variant={statusToVariant(selected.status)}>{statusLabel(selected.status)}</Badge>
+                      {headerSla.status !== "none" && (
+                        <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1", slaColors.bg, slaColors.text, slaColors.ring)}>
+                          <span className={cn("size-1.5 rounded-full", slaColors.dot)} />
+                          {headerSla.label}
+                        </span>
+                      )}
+                      {/* Tags inline + manage popover */}
+                      {(selected.tags ?? []).slice(0, 3).map((t) => (
+                        <span key={t.id} className="inline-flex items-center gap-0.5 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-violet-200">
+                          #{t.name}
+                        </span>
+                      ))}
+                      {(selected.tags ?? []).length > 3 && (
+                        <span className="text-[10px] text-muted-foreground">+{selected.tags.length - 3}</span>
+                      )}
+                      <div className="relative" ref={manualTagRef}>
+                        <button
+                          onClick={() => { setManualTagOpen((v) => !v); setManualTagSearch(""); setNewTagName("") }}
+                          className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[10px] font-medium ring-1 ring-dashed ring-slate-300 text-muted-foreground hover:text-foreground hover:ring-slate-400 transition-colors"
+                          title="Gerenciar tags"
+                        >
+                          <Tags className="size-3" />
+                          Tags
+                        </button>
+                        {manualTagOpen && (
+                          <div className="absolute right-0 top-full z-50 mt-1.5 w-64 overflow-hidden rounded-xl border bg-white shadow-lg">
+                            <div className="p-2 border-b">
+                              <div className="flex items-center gap-1.5 rounded-lg border bg-muted/30 px-2.5 py-1.5">
+                                <Search className="size-3 shrink-0 text-muted-foreground" />
+                                <input
+                                  autoFocus
+                                  className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+                                  placeholder="Buscar ou criar tag…"
+                                  value={manualTagSearch}
+                                  onChange={(e) => { setManualTagSearch(e.target.value); setNewTagName(e.target.value) }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      const exact = allCompanyTags.find((t) => t.name === newTagName.trim().toLowerCase().replace(/\s+/g, "-"))
+                                      if (exact) applyTagDirect(exact)
+                                      else createAndApplyTag(newTagName)
+                                      setManualTagOpen(false)
+                                    }
+                                  }}
+                                />
+                              </div>
+                            </div>
+                            <div className="max-h-52 overflow-y-auto py-1">
+                              {allCompanyTags
+                                .filter((t) => !manualTagSearch || t.name.includes(manualTagSearch.toLowerCase()))
+                                .map((tag) => {
+                                  const isOn = appliedTagNames.has(tag.name)
+                                  return (
+                                    <button
+                                      key={tag.id}
+                                      onClick={() => applyTagDirect(tag)}
+                                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left hover:bg-muted/50 transition-colors"
+                                    >
+                                      <span className={cn(
+                                        "flex size-4 shrink-0 items-center justify-center rounded border text-[10px] transition-colors",
+                                        isOn ? "border-violet-500 bg-violet-500 text-white" : "border-muted-foreground/30"
+                                      )}>
+                                        {isOn && "✓"}
+                                      </span>
+                                      <span className="text-xs font-medium text-foreground">#{tag.name}</span>
+                                    </button>
+                                  )
+                                })}
+                              {allCompanyTags.filter((t) => !manualTagSearch || t.name.includes(manualTagSearch.toLowerCase())).length === 0 && (
+                                <p className="px-3 py-2 text-xs text-muted-foreground">Nenhuma tag encontrada.</p>
+                              )}
+                            </div>
+                            {newTagName.trim() && !allCompanyTags.some((t) => t.name === newTagName.trim().toLowerCase().replace(/\s+/g, "-")) && (
+                              <div className="border-t p-2">
+                                <button
+                                  onClick={() => { createAndApplyTag(newTagName); setManualTagOpen(false) }}
+                                  className="flex w-full items-center gap-2 rounded-lg bg-violet-50 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-100 transition-colors"
+                                >
+                                  <Plus className="size-3.5" />
+                                  Criar "#{newTagName.trim().toLowerCase().replace(/\s+/g, "-")}"
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
+                    </div>
+                    <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      {isEmailView ? <Mail className="size-3" /> : <MessageCircle className="size-3" />}
+                      <span className="truncate">{contact ?? "Sem contato"}</span>
+                      <span className="text-muted-foreground/40">·</span>
+                      <span>{channelLabel(selected.channel)}</span>
+                      {selected.instanceId && (
+                        <>
+                          <span className="text-muted-foreground/40">·</span>
+                          <span className="truncate rounded bg-white px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-slate-200">
+                            {selected.instanceId}
+                          </span>
+                        </>
+                      )}
+                    </p>
+                  </div>
+                </div>
 
-                      {/* create new */}
-                      {newTagName.trim() && !allCompanyTags.some((t) => t.name === newTagName.trim().toLowerCase().replace(/\s+/g, "-")) && (
-                        <div className="border-t p-2">
+                {/* Row 2 — Toolbar (sticky actions with icons + shortcut tooltips) */}
+                <div className="flex flex-wrap items-center gap-1">
+                  <ToolbarAction icon={Send} label="Responder" hint="R" onClick={() => replyTextareaRef.current?.focus()} />
+                  <ToolbarAction icon={ArrowRightLeft} label="Transferir" hint="T" onClick={openTransferModal} />
+                  <ToolbarAction icon={Kanban} label="Oportunidade" hint="O" onClick={openOpportunityModal} />
+                  <ToolbarAction
+                    icon={ClipboardList}
+                    label="Orçamento"
+                    hint="Q"
+                    onClick={openQuoteModal}
+                    disabled={selected.channel === "EMAIL"}
+                  />
+                  <ToolbarAction icon={LifeBuoy} label="Chamado" hint="C" onClick={openTicketModal} />
+                  <ToolbarAction icon={History} label="Histórico" hint="I" onClick={openCustomerHistory} />
+                  {!isArchived ? (
+                    <ToolbarAction icon={Archive} label="Arquivar" hint="E" onClick={() => updateConvStatus(selected.id, "ARQUIVADO")} />
+                  ) : selected.status === "ARQUIVADO" ? (
+                    <ToolbarAction icon={ArchiveX} label="Desarquivar" hint="E" onClick={() => updateConvStatus(selected.id, "EM_ANALISE")} />
+                  ) : null}
+                  <div className="mx-1 h-5 w-px bg-slate-200" />
+                  {/* AI tools dropdown */}
+                  <div className="relative" ref={aiDropdownRef}>
+                    <button
+                      onClick={() => setAiDropdownOpen((v) => !v)}
+                      className="inline-flex items-center gap-1 rounded-md bg-gradient-to-br from-cyan-50 to-violet-50 px-2 py-1 text-[11px] font-semibold text-cyan-700 ring-1 ring-cyan-200 hover:from-cyan-100 hover:to-violet-100 transition-colors"
+                      title="Ferramentas IA (A)"
+                    >
+                      <Sparkles className="size-3.5" />
+                      IA
+                      <kbd className="ml-0.5 hidden sm:inline rounded bg-white/80 px-1 text-[9px] font-mono text-cyan-600 ring-1 ring-cyan-200">A</kbd>
+                      <ChevronDown className="size-3" />
+                    </button>
+                    {aiDropdownOpen && (
+                      <div className="absolute right-0 top-full z-50 mt-1.5 w-56 overflow-hidden rounded-xl border bg-white shadow-lg">
+                        {AI_TOOLS.map((t) => (
                           <button
-                            onClick={() => { createAndApplyTag(newTagName); setManualTagOpen(false) }}
-                            className="flex w-full items-center gap-2 rounded-lg bg-violet-50 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-100 transition-colors"
+                            key={t.id}
+                            onClick={() => openAiTool(t.id)}
+                            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
                           >
-                            <Plus className="size-3.5" />
-                            Criar "#{newTagName.trim().toLowerCase().replace(/\s+/g, "-")}"
+                            <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-md", t.accent)}>
+                              <t.icon className="size-3.5" />
+                            </span>
+                            {t.name}
+                          </button>
+                        ))}
+                        <div className="border-t">
+                          <button
+                            onClick={openTagTool}
+                            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
+                          >
+                            <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-violet-50 text-violet-700">
+                              <Tags className="size-3.5" />
+                            </span>
+                            Sugerir Tags
                           </button>
                         </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                {/* Help button */}
-                <Button variant="ghost" size="icon" className="size-7" onClick={() => setHelpOpen(true)} title="Ajuda">
-                  <HelpCircle className="size-4 text-muted-foreground" />
-                </Button>
-
-                {/* AI tools dropdown */}
-                <div className="relative" ref={aiDropdownRef}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setAiDropdownOpen((v) => !v)}
-                    className="gap-1.5"
-                  >
-                    <Sparkles className="size-3.5 text-cyan-600" />
-                    IA
-                    <ChevronDown className="size-3" />
-                  </Button>
-                  {aiDropdownOpen && (
-                    <div className="absolute right-0 top-full z-50 mt-1.5 w-56 overflow-hidden rounded-xl border bg-white shadow-lg">
-                      {AI_TOOLS.map((t) => (
-                        <button
-                          key={t.id}
-                          onClick={() => openAiTool(t.id)}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
-                        >
-                          <span className={cn("flex size-7 shrink-0 items-center justify-center rounded-md", t.accent)}>
-                            <t.icon className="size-3.5" />
-                          </span>
-                          {t.name}
-                        </button>
-                      ))}
-                      <div className="border-t">
-                        <button
-                          onClick={openTagTool}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
-                        >
-                          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-violet-50 text-violet-700">
-                            <Tags className="size-3.5" />
-                          </span>
-                          Sugerir Tags
-                        </button>
+                        <div className="border-t">
+                          <button
+                            onClick={openAiHistory}
+                            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
+                          >
+                            <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                              <Activity className="size-3.5" />
+                            </span>
+                            Histórico de ações IA
+                          </button>
+                        </div>
                       </div>
-                      <div className="border-t">
-                        <button
-                          onClick={openAiHistory}
-                          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted/50"
-                        >
-                          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                            <Activity className="size-3.5" />
-                          </span>
-                          Histórico de ações IA
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
+                  <ToolbarAction icon={HelpCircle} label="Ajuda" hint="?" onClick={() => setHelpOpen(true)} />
                 </div>
               </div>
+                )
+              })()}
 
               <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
-                {selected.messages.map((msg) => (
-                  msg.role === "SISTEMA" ? (
-                    <div key={msg.id} className="flex justify-center py-0.5">
-                      <div className="flex items-center gap-1.5 rounded-full border border-dashed border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500">
-                        <Lock className="size-3 shrink-0" />
-                        <span className="font-medium">Nota interna</span>
-                        <span className="mx-1 text-slate-300">&middot;</span>
-                        <span>{msg.text}</span>
-                      </div>
-                    </div>
-                  ) : (
-                  <div className={cn("flex gap-3", msg.align === "right" && "justify-end")}>
-                    {msg.align === "left" && (
-                      <Avatar className="size-8">
-                        <AvatarFallback className={msg.isAiGenerated ? "bg-cyan-50 text-cyan-700" : "bg-slate-100 text-slate-600"}>
-                          {msg.isAiGenerated ? "IA" : <UserRound className="size-3.5" />}
-                        </AvatarFallback>
-                      </Avatar>
-                    )}
-                    <div className={cn(
-                      "max-w-[760px] rounded-lg border px-3 py-2.5",
-                      msg.align === "right" ? "bg-primary text-primary-foreground"
-                        : msg.isAiGenerated ? "border-cyan-200 bg-cyan-50 text-cyan-950"
-                        : "bg-muted/50",
-                      msg.pending && "opacity-80",
-                    )}>
-                      <div className="mb-1 flex items-center gap-2 text-xs opacity-80">
-                        <span className="font-medium">{msg.authorName}</span>
-                        <span>{msg.role}</span>
-                        <span className="ml-auto flex items-center gap-1.5">
-                          {formatRelativeTime(msg.createdAt)}
-                          {msg.pending && (
-                            <span className="inline-flex items-center">
-                              <svg className="size-3 animate-spin opacity-60" viewBox="0 0 24 24" fill="none">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                              </svg>
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                      {msg.text && <p className="text-sm leading-5">{msg.text}</p>}
-                      <MessageAttachments attachments={msg.attachments} outgoing={msg.align === "right"} />
+                {aiPhase === "loading" && (
+                  <div className="sticky top-0 z-10 -mx-3 -mt-3 mb-1 bg-gradient-to-b from-cyan-50/95 to-cyan-50/0 px-3 py-2">
+                    <div className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[11px] font-medium text-cyan-700 ring-1 ring-cyan-200 shadow-sm">
+                      <Sparkles className="size-3 animate-pulse" />
+                      IA processando…
                     </div>
                   </div>
-                  )
-                ))}
+                )}
+                {(() => {
+                  const items: React.ReactNode[] = []
+                  let lastDateKey: string | null = null
+                  // Index of the last outgoing message that was read by the customer
+                  let lastReadOutgoingIdx = -1
+                  if (presence.customerLastReadAt) {
+                    const readAt = new Date(presence.customerLastReadAt).getTime()
+                    selected.messages.forEach((m, i) => {
+                      if (m.align === "right" && m.role !== "SISTEMA" && new Date(m.createdAt).getTime() <= readAt) {
+                        lastReadOutgoingIdx = i
+                      }
+                    })
+                  }
+                  selected.messages.forEach((msg, idx) => {
+                    const d = new Date(msg.createdAt)
+                    const dateKey = d.toDateString()
+                    if (dateKey !== lastDateKey) {
+                      lastDateKey = dateKey
+                      items.push(
+                        <div key={`sep-${dateKey}`} className="my-1 flex items-center gap-2">
+                          <div className="h-px flex-1 bg-slate-200" />
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground ring-1 ring-slate-200">
+                            {formatDateSeparator(d)}
+                          </span>
+                          <div className="h-px flex-1 bg-slate-200" />
+                        </div>
+                      )
+                    }
+                    if (msg.role === "SISTEMA") {
+                      items.push(
+                        <div key={msg.id} className="flex justify-center py-0.5">
+                          <div className="flex items-center gap-1.5 rounded-full border border-dashed border-slate-200 bg-slate-50 px-3 py-1 text-[11px] text-slate-500">
+                            <Lock className="size-3 shrink-0" />
+                            <span className="font-medium">Nota interna</span>
+                            <span className="mx-1 text-slate-300">&middot;</span>
+                            <span>{msg.text}</span>
+                            <span className="ml-1 text-slate-400">· {d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
+                          </div>
+                        </div>
+                      )
+                      return
+                    }
+                    items.push(
+                      <div key={msg.id} className={cn("flex gap-3", msg.align === "right" && "justify-end")}>
+                        {msg.align === "left" && (
+                          <Avatar className="size-8">
+                            <AvatarFallback className={msg.isAiGenerated ? "bg-cyan-50 text-cyan-700" : "bg-slate-100 text-slate-600"}>
+                              {msg.isAiGenerated ? "IA" : <UserRound className="size-3.5" />}
+                            </AvatarFallback>
+                          </Avatar>
+                        )}
+                        <div className={cn(
+                          "max-w-[760px] rounded-lg border px-3 py-2.5",
+                          msg.align === "right" ? "bg-primary text-primary-foreground"
+                            : msg.isAiGenerated ? "border-cyan-200 bg-cyan-50 text-cyan-950"
+                            : "bg-muted/50",
+                          msg.pending && "opacity-80",
+                        )}>
+                          <div className="mb-1 flex items-center gap-2 text-xs opacity-80">
+                            <span className="font-medium">{msg.authorName}</span>
+                            <span>{msg.role}</span>
+                            <span className="ml-auto flex items-center gap-1.5">
+                              {d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                              {msg.pending && (
+                                <span className="inline-flex items-center">
+                                  <svg className="size-3 animate-spin opacity-60" viewBox="0 0 24 24" fill="none">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                                  </svg>
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                          {msg.text && <p className="text-sm leading-5">{msg.text}</p>}
+                          <MessageAttachments attachments={msg.attachments} outgoing={msg.align === "right"} />
+                        </div>
+                      </div>
+                    )
+                    if (idx === lastReadOutgoingIdx && presence.customerLastReadAt) {
+                      const readDate = new Date(presence.customerLastReadAt)
+                      items.push(
+                        <div key={`read-${msg.id}`} className="flex justify-end -mt-1">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600">
+                            <CheckCircle2 className="size-3" />
+                            Lido às {readDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </div>
+                      )
+                    }
+                  })
+                  return items
+                })()}
+                {presence.typing && (
+                  <div className="flex items-center gap-2 pl-11">
+                    <div className="inline-flex items-center gap-1.5 rounded-2xl bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+                      <span className="flex gap-0.5">
+                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:-0.3s]" />
+                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:-0.15s]" />
+                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/70" />
+                      </span>
+                      <span className="italic">cliente digitando…</span>
+                    </div>
+                  </div>
+                )}
                 <div ref={messagesEndRef} />
               </div>
 
-              <div className="shrink-0 border-t p-3">
-                <div className="rounded-lg border bg-muted/35 p-2.5">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <Badge variant="outline">
-                      {isEmailView ? <Mail className="mr-1 size-3" /> : <Clock3 className="mr-1 size-3" />}
-                      {isEmailView ? "Responder e-mail" : "Responder via WhatsApp"}
+              <div className="shrink-0 border-t bg-slate-50/40 p-3">
+                <div className="rounded-lg border bg-white p-2.5 shadow-sm">
+                  {/* Quick ROP chips (top 3 most-used for this channel) */}
+                  {availableRops.length > 0 && (
+                    <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Atalhos</span>
+                      {availableRops.slice(0, 3).map((rop) => (
+                        <button
+                          key={rop.id}
+                          type="button"
+                          onClick={() => applyRop(rop)}
+                          title={rop.text}
+                          className="inline-flex max-w-[200px] items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200 transition-colors"
+                        >
+                          <span className="rounded bg-white px-1 text-[9px] font-mono text-muted-foreground ring-1 ring-slate-200">{rop.shortcut}</span>
+                          <span className="truncate">{rop.title}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                    <Badge variant="outline" className="h-6 gap-1 text-[10px]">
+                      {isEmailView ? <Mail className="size-2.5" /> : <Clock3 className="size-2.5" />}
+                      {isEmailView ? "E-mail" : "WhatsApp"}
                     </Badge>
                     <div className="relative" ref={ropsRef}>
                       <Button
                         variant="outline"
                         size="sm"
-                        className={cn("h-7 gap-1.5 px-2 text-xs", ropsOpen && "border-primary/30 bg-primary/5 text-primary")}
+                        className={cn("h-6 gap-1 px-1.5 text-[11px]", ropsOpen && "border-primary/30 bg-primary/5 text-primary")}
                         onClick={() => setRopsOpen((open) => !open)}
                         disabled={!selected}
                       >
-                        <ClipboardList className="size-3.5" />
+                        <ClipboardList className="size-3" />
                         ROPs
-                        <Badge variant="secondary" className="h-4 px-1 text-[10px]">{availableRops.length}</Badge>
-                        <ChevronDown className={cn("size-3 transition-transform", ropsOpen && "rotate-180")} />
+                        <span className="text-[9px] text-muted-foreground">{availableRops.length}</span>
                       </Button>
 
                       {ropsOpen && (
@@ -2658,14 +3055,13 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                       <Button
                         variant="outline"
                         size="sm"
-                        className={cn("h-7 gap-1.5 px-2 text-xs", knowledgeOpen && "border-sky-300 bg-sky-50 text-sky-700")}
+                        className={cn("h-6 gap-1 px-1.5 text-[11px]", knowledgeOpen && "border-sky-300 bg-sky-50 text-sky-700")}
                         onClick={() => setKnowledgeOpen((open) => !open)}
                         disabled={!selected}
                       >
-                        <BookOpenText className="size-3.5" />
+                        <BookOpenText className="size-3" />
                         Base
-                        <Badge variant="secondary" className="h-4 px-1 text-[10px]">{availableKnowledgeArticles.length}</Badge>
-                        <ChevronDown className={cn("size-3 transition-transform", knowledgeOpen && "rotate-180")} />
+                        <span className="text-[9px] text-muted-foreground">{availableKnowledgeArticles.length}</span>
                       </Button>
 
                       {knowledgeOpen && (
@@ -2751,8 +3147,16 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
                         </div>
                       )}
                     </div>
-                    <span className="text-[11px] text-muted-foreground">
-                      {isEmailView ? "Resposta salva localmente nesta primeira versão" : "Ctrl+Enter para enviar"}
+                    <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                      {isEmailView ? (
+                        "Resposta salva localmente"
+                      ) : (
+                        <>
+                          <kbd className="rounded bg-slate-100 px-1 font-mono text-[9px] ring-1 ring-slate-200">⌘</kbd>
+                          <kbd className="rounded bg-slate-100 px-1 font-mono text-[9px] ring-1 ring-slate-200">↵</kbd>
+                          enviar
+                        </>
+                      )}
                     </span>
                   </div>
                   {sendError && (
@@ -3778,198 +4182,381 @@ export function SupportView({ mode = "support" }: { mode?: "support" | "emails" 
 
         {/* Right — context sidebar */}
         <aside className="min-h-0 space-y-3 overflow-y-auto pr-1">
-          {/* ── Ações rápidas ───────────────────────────────────────────── */}
-          <Card>
-            <CardHeader className="p-3 pb-2">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Ações rápidas</CardTitle>
-                  <CardDescription>Operações vinculadas a esta conversa</CardDescription>
+          {selected ? (
+            <>
+              {/* Cliente */}
+              <div className="overflow-hidden rounded-lg border bg-white shadow-soft">
+                <div className="flex items-center gap-2 border-b px-3 py-2.5">
+                  <UserRound className="size-3.5 text-primary" />
+                  <p className="text-xs font-semibold">Cliente</p>
                 </div>
-                <Button variant="ghost" size="icon" className="size-6" onClick={() => setHelpOpen(true)} title="Ajuda do atendimento">
-                  <HelpCircle className="size-3.5 text-muted-foreground" />
-                </Button>
+                <div className="space-y-2 p-3 text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <CustomerAvatar customer={selected.customer} className="size-10" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className="truncate font-semibold">{selected.customer.name}</p>
+                        {selected.customer.isVip && <Crown className="size-3 shrink-0 text-amber-500" />}
+                      </div>
+                      <p className="truncate text-[11px] text-muted-foreground">{customer?.stage ?? "Sem etapa"}</p>
+                    </div>
+                  </div>
+                  {selected.customer.phone && (
+                    <div>
+                      <p className="text-muted-foreground">Telefone</p>
+                      <a
+                        href={`https://wa.me/${selected.customer.phone.replace(/\D/g, "")}`}
+                        target="_blank" rel="noreferrer"
+                        className="font-semibold text-emerald-700 hover:underline"
+                      >
+                        {selected.customer.phone}
+                      </a>
+                    </div>
+                  )}
+                  {selected.customer.email && (
+                    <div>
+                      <p className="text-muted-foreground">E-mail</p>
+                      <a href={`mailto:${selected.customer.email}`} className="block truncate font-semibold text-blue-700 hover:underline">
+                        {selected.customer.email}
+                      </a>
+                    </div>
+                  )}
+                </div>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-2 p-3 pt-0">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full justify-start gap-2"
-                onClick={openOpportunityModal}
-                disabled={!selected}
-              >
-                <Kanban className="size-3.5" />
-                Criar Oportunidade
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full justify-start gap-2"
-                onClick={openQuoteModal}
-                disabled={!selected || selected.channel === "EMAIL"}
-                title={selected?.channel === "EMAIL" ? "Envio por e-mail não faz parte deste ciclo" : "Criar orçamento para esta conversa"}
-              >
-                <ClipboardList className="size-3.5" />
-                Criar orçamento
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full justify-start gap-2"
-                onClick={openTicketModal}
-                disabled={!selected}
-              >
-                <LifeBuoy className="size-3.5" />
-                Abrir chamado
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full justify-start gap-2"
-                onClick={openCustomerHistory}
-                disabled={!selected}
-              >
-                <History className="size-3.5" />
-                Histórico do cliente
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full justify-start gap-2"
-                onClick={openTransferModal}
-                disabled={!selected}
-              >
-                <ArrowRightLeft className="size-3.5" />
-                Transferir conversa
-              </Button>
-              {selected && !["ARQUIVADO","PARA_EXCLUIR"].includes(selected.status) && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start gap-2"
-                  onClick={() => updateConvStatus(selected.id, "ARQUIVADO")}
-                >
-                  <Archive className="size-3.5" />
-                  Arquivar conversa
-                </Button>
-              )}
-              {selected?.status === "ARQUIVADO" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start gap-2"
-                  onClick={() => updateConvStatus(selected.id, "EM_ANALISE")}
-                >
-                  <ArchiveX className="size-3.5" />
-                  Desarquivar conversa
-                </Button>
-              )}
-              {["OWNER","ADMIN","GESTOR"].includes(auth?.role ?? "") && selected && selected.status !== "PARA_EXCLUIR" && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start gap-2 text-amber-700 hover:bg-amber-50 hover:text-amber-800"
-                  onClick={() => updateConvStatus(selected.id, "PARA_EXCLUIR")}
-                >
-                  <Trash2 className="size-3.5" />
-                  Marcar para excluir
-                </Button>
-              )}
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader className="p-3 pb-2">
-              <CardTitle>Contexto do cliente</CardTitle>
-              <CardDescription>Sinais unificados do relacionamento</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2 p-3 pt-0">
-              <div className="flex items-center justify-between border-b pb-2">
-                <span className="text-sm text-muted-foreground">Valor potencial</span>
-                {editingPotentialValue ? (
-                  <input
-                    autoFocus
-                    type="text"
-                    value={potentialValueInput}
-                    onChange={(e) => setPotentialValueInput(e.target.value)}
-                    onBlur={async () => {
-                      setEditingPotentialValue(false)
-                      if (!customer?.id) return
-                      const parsed = parseCurrencyValue(potentialValueInput)
-                      const newValue = parsed !== null ? String(parsed) : null
-                      await fetch(`/api/customers/${customer.id}`, {
-                        method: "PATCH",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ value: newValue }),
-                      })
-                      setSelected((prev) =>
-                        prev ? { ...prev, leadValue: newValue, customer: { ...prev.customer, value: newValue } } : prev
-                      )
-                      setConvList((prev) =>
-                        prev.map((c) => c.id === selectedId ? { ...c, leadValue: newValue } : c)
-                      )
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") (e.target as HTMLInputElement).blur()
-                      if (e.key === "Escape") {
-                        setEditingPotentialValue(false)
-                        setPotentialValueInput("")
-                      }
-                    }}
-                    className="w-32 rounded border px-1.5 py-0.5 text-right text-sm font-medium focus:outline-none focus:ring-1 focus:ring-primary"
-                  />
-                ) : (
+              {/* Atividade */}
+              {(() => {
+                void slaTick
+                const ageMin = Math.floor((Date.now() - new Date(selected.createdAt).getTime()) / 60_000)
+                const lastCustomerMsg = [...selected.messages].reverse().find((m) => m.align === "left" && m.role !== "SISTEMA")
+                const lastReplyMin = lastCustomerMsg
+                  ? Math.floor((Date.now() - new Date(lastCustomerMsg.createdAt).getTime()) / 60_000)
+                  : null
+                return (
+                  <div className="overflow-hidden rounded-lg border bg-white shadow-soft">
+                    <div className="flex items-center gap-2 border-b px-3 py-2.5">
+                      <Clock3 className="size-3.5 text-primary" />
+                      <p className="text-xs font-semibold">Atividade</p>
+                    </div>
+                    <div className="divide-y">
+                      <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                        <span className="text-muted-foreground">Idade</span>
+                        <span className="truncate font-semibold">{formatMinutesShort(ageMin)}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                        <span className="text-muted-foreground">Último cliente</span>
+                        <span className="truncate font-semibold">{lastReplyMin !== null ? `há ${formatMinutesShort(lastReplyMin)}` : "—"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                        <span className="text-muted-foreground">Atendente</span>
+                        {selected.attendant ? (
+                          <span className="inline-flex items-center gap-1.5 truncate font-semibold">
+                            {selected.attendant.avatarUrl
+                              ? <img src={selected.attendant.avatarUrl} alt="" className="size-3.5 rounded-full object-cover" />
+                              : <span className="flex size-3.5 items-center justify-center rounded-full bg-muted text-[8px] font-semibold">{selected.attendant.name.charAt(0).toUpperCase()}</span>}
+                            <span className="truncate">{selected.attendant.name}</span>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => claimConversation(selected.id)}
+                            className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-primary/90"
+                          >
+                            Capturar
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                        <span className="text-muted-foreground">Criada</span>
+                        <span className="truncate font-semibold">{new Date(selected.createdAt).toLocaleString("pt-BR")}</span>
+                      </div>
+                      {selected.transferredAt && (
+                        <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                          <span className="text-muted-foreground">Transferida</span>
+                          <span className="truncate font-semibold">{new Date(selected.transferredAt).toLocaleString("pt-BR")}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Pipeline */}
+              <div className="overflow-hidden rounded-lg border bg-white shadow-soft">
+                <div className="flex items-center gap-2 border-b px-3 py-2.5">
+                  <DollarSign className="size-3.5 text-primary" />
+                  <p className="text-xs font-semibold">Pipeline</p>
+                </div>
+                <div className="divide-y">
+                  <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                    <span className="text-muted-foreground">Valor potencial</span>
+                    {editingPotentialValue ? (
+                      <input
+                        autoFocus
+                        type="text"
+                        value={potentialValueInput}
+                        onChange={(e) => setPotentialValueInput(e.target.value)}
+                        onBlur={async () => {
+                          setEditingPotentialValue(false)
+                          if (!customer?.id) return
+                          const parsed = parseCurrencyValue(potentialValueInput)
+                          const newValue = parsed !== null ? String(parsed) : null
+                          await fetch(`/api/customers/${customer.id}`, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ value: newValue }),
+                          })
+                          setSelected((prev) =>
+                            prev ? { ...prev, leadValue: newValue, customer: { ...prev.customer, value: newValue } } : prev
+                          )
+                          setConvList((prev) =>
+                            prev.map((c) => c.id === selectedId ? { ...c, leadValue: newValue } : c)
+                          )
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") (e.target as HTMLInputElement).blur()
+                          if (e.key === "Escape") { setEditingPotentialValue(false); setPotentialValueInput("") }
+                        }}
+                        className="w-24 rounded border px-1.5 py-0.5 text-right text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => {
+                          const current = parseCurrencyValue(customer?.value)
+                          setPotentialValueInput(current !== null ? String(current) : "")
+                          setEditingPotentialValue(true)
+                        }}
+                        className="truncate rounded px-1 font-semibold hover:bg-muted"
+                      >
+                        {formatCurrency(customer?.value)}
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                    <span className="text-muted-foreground">Etapa</span>
+                    <span className="truncate font-semibold">{customer?.stage ?? "—"}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                    <span className="text-muted-foreground">Origem</span>
+                    <span className="truncate font-semibold">{customer?.source ?? "—"}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sinais IA */}
+              <div className="overflow-hidden rounded-lg border bg-white shadow-soft">
+                <div className="flex items-center gap-2 border-b px-3 py-2.5">
+                  <Sparkles className="size-3.5 text-primary" />
+                  <p className="text-xs font-semibold">Sinais IA</p>
+                </div>
+                <div className="space-y-2 p-3 text-xs">
+                  {(() => {
+                    const sentimentMap: Record<string, { label: string; cls: string }> = {
+                      POSITIVO: { label: "Positivo", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+                      NEUTRO:   { label: "Neutro",   cls: "bg-slate-50 text-slate-700 ring-slate-200" },
+                      NEGATIVO: { label: "Negativo", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
+                    }
+                    const riskMap: Record<string, { label: string; cls: string }> = {
+                      ALTO:  { label: "Risco alto",  cls: "bg-rose-50 text-rose-700 ring-rose-200" },
+                      MEDIO: { label: "Risco médio", cls: "bg-amber-50 text-amber-700 ring-amber-200" },
+                      BAIXO: { label: "Risco baixo", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+                    }
+                    const sent = customer?.aiSentiment ? sentimentMap[customer.aiSentiment.toUpperCase()] : null
+                    const risk = customer?.aiRisk ? riskMap[customer.aiRisk.toUpperCase()] : null
+                    return (
+                      <div className="flex flex-wrap gap-1.5">
+                        {sent && (
+                          <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1", sent.cls)}>
+                            <Thermometer className="size-3" />
+                            {sent.label}
+                          </span>
+                        )}
+                        {risk && (
+                          <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1", risk.cls)}>
+                            <ShieldCheck className="size-3" />
+                            {risk.label}
+                          </span>
+                        )}
+                        {!sent && !risk && (
+                          <span className="text-[11px] text-muted-foreground">Sem análise ainda</span>
+                        )}
+                      </div>
+                    )
+                  })()}
+                  {customer?.aiNextBestAction && (
+                    <div>
+                      <p className="text-muted-foreground">Próxima melhor ação</p>
+                      <p className="rounded-md bg-cyan-50 px-2 py-1.5 text-[11px] leading-4 text-cyan-950">
+                        {customer.aiNextBestAction}
+                      </p>
+                    </div>
+                  )}
+                  {selected.aiReason && (
+                    <div>
+                      <p className="text-muted-foreground">Resumo IA</p>
+                      <p className="text-[11px] leading-4">{selected.aiReason}</p>
+                    </div>
+                  )}
+                  {customer?.aiFindings && customer.aiFindings.length > 0 && (
+                    <div className="space-y-1">
+                      <p className="text-muted-foreground">Findings</p>
+                      {customer.aiFindings.slice(0, 3).map((f) => (
+                        <div key={f.id} className="rounded bg-slate-50 px-2 py-1 text-[11px] leading-4">
+                          {f.text}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Ferramentas IA */}
+              <div className="overflow-hidden rounded-lg border bg-white shadow-soft">
+                <div className="flex items-center gap-2 border-b px-3 py-2.5">
+                  <Wand2 className="size-3.5 text-primary" />
+                  <p className="text-xs font-semibold">Ferramentas IA</p>
+                </div>
+                <div className="divide-y">
+                  {AI_TOOLS.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => openAiTool(t.id)}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50"
+                    >
+                      <span className={cn("flex size-6 shrink-0 items-center justify-center rounded", t.accent)}>
+                        <t.icon className="size-3" />
+                      </span>
+                      <span className="truncate font-medium">{t.name}</span>
+                    </button>
+                  ))}
                   <button
-                    onClick={() => {
-                      const current = parseCurrencyValue(customer?.value)
-                      setPotentialValueInput(current !== null ? String(current) : "")
-                      setEditingPotentialValue(true)
-                    }}
-                    title="Clique para editar"
-                    className="rounded px-1 text-sm font-medium hover:bg-muted"
+                    onClick={openTagTool}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50"
                   >
-                    {formatCurrency(customer?.value)}
+                    <span className="flex size-6 shrink-0 items-center justify-center rounded bg-violet-50 text-violet-700">
+                      <Tags className="size-3" />
+                    </span>
+                    <span className="truncate font-medium">Sugerir Tags</span>
                   </button>
-                )}
+                  <button
+                    onClick={openAiHistory}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50"
+                  >
+                    <span className="flex size-6 shrink-0 items-center justify-center rounded bg-muted text-muted-foreground">
+                      <Activity className="size-3" />
+                    </span>
+                    <span className="truncate font-medium">Histórico IA</span>
+                  </button>
+                </div>
               </div>
-              {[
-                ["Etapa", customer?.stage ?? "—"],
-                ["Origem", customer?.source ?? "—"],
-                ["Sentimento", customer?.aiSentiment ?? "—"],
-              ].map(([label, value]) => (
-                <div key={label} className="flex items-center justify-between border-b pb-2 last:border-b-0 last:pb-0">
-                  <span className="text-sm text-muted-foreground">{label}</span>
-                  <span className="text-sm font-medium">{value}</span>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
 
-          <Card>
-            <CardHeader className="p-3 pb-2">
-              <CardTitle>Análise da IA</CardTitle>
-              <CardDescription>Leitura rápida para conduzir o atendimento</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2 p-3 pt-0">
-              {[
-                ["Risco", customer?.aiRisk ?? "—"],
-                ["Próxima ação", selected?.nextAction ?? "—"],
-                ["Razão IA", selected?.aiReason ?? "—"],
-              ].map(([label, value]) => (
-                <div key={label} className="flex items-center justify-between border-b pb-2 last:border-b-0 last:pb-0">
-                  <span className="text-sm text-muted-foreground">{label}</span>
-                  <span className="max-w-32 text-right text-sm font-medium leading-5">{value}</span>
+              {/* Histórico do cliente */}
+              <div className="overflow-hidden rounded-lg border bg-white shadow-soft">
+                <div className="flex items-center gap-2 border-b px-3 py-2.5">
+                  <History className="size-3.5 text-primary" />
+                  <p className="text-xs font-semibold">Histórico do cliente</p>
                 </div>
-              ))}
-              {customer?.aiNextBestAction && (
-                <div className="rounded-md border bg-cyan-50 px-2 py-1.5 text-[11px] leading-4 text-cyan-950">
-                  {customer.aiNextBestAction}
+                <div className="p-2">
+                  {customerHistoryLoading ? (
+                    <p className="py-3 text-center text-xs text-muted-foreground">Carregando…</p>
+                  ) : customerHistoryData.length === 0 ? (
+                    <p className="py-3 text-center text-xs text-muted-foreground">Sem conversas anteriores.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {customerHistoryData.slice(0, 5).map((conv) => (
+                        <button
+                          key={conv.id}
+                          onClick={() => { loadDetail(conv.id); setCustomerHistoryOpen(false) }}
+                          className="w-full rounded-md border bg-white p-2 text-left transition-colors hover:bg-muted/30"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <Badge variant={statusToVariant(conv.status)}>{statusLabel(conv.status)}</Badge>
+                            <span className="text-[10px] text-muted-foreground">{formatRelativeTime(conv.lastMessageAt ?? conv.createdAt)}</span>
+                          </div>
+                          <p className="mt-1 truncate text-[11px] text-muted-foreground">{conv.preview ?? "—"}</p>
+                        </button>
+                      ))}
+                      {customerHistoryData.length > 5 && (
+                        <button
+                          onClick={openCustomerHistory}
+                          className="w-full rounded-md px-2 py-1.5 text-[11px] font-medium text-primary hover:bg-muted/40"
+                        >
+                          Ver todas ({customerHistoryData.length})
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
-            </CardContent>
-          </Card>
+              </div>
 
+              {/* Ações */}
+              <div className="overflow-hidden rounded-lg border bg-white shadow-soft">
+                <div className="flex items-center gap-2 border-b px-3 py-2.5">
+                  <Zap className="size-3.5 text-primary" />
+                  <p className="text-xs font-semibold">Ações</p>
+                </div>
+                <div className="divide-y">
+                  <button
+                    onClick={openOpportunityModal}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50"
+                  >
+                    <Kanban className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate font-medium">Criar oportunidade</span>
+                  </button>
+                  <button
+                    onClick={openQuoteModal}
+                    disabled={selected.channel === "EMAIL"}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <ClipboardList className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate font-medium">Criar orçamento</span>
+                  </button>
+                  <button
+                    onClick={openTicketModal}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50"
+                  >
+                    <LifeBuoy className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate font-medium">Abrir chamado</span>
+                  </button>
+                  <button
+                    onClick={openTransferModal}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50"
+                  >
+                    <ArrowRightLeft className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate font-medium">Transferir conversa</span>
+                  </button>
+                  {!["ARQUIVADO","PARA_EXCLUIR"].includes(selected.status) && (
+                    <button
+                      onClick={() => updateConvStatus(selected.id, "ARQUIVADO")}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50"
+                    >
+                      <Archive className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate font-medium">Arquivar</span>
+                    </button>
+                  )}
+                  {selected.status === "ARQUIVADO" && (
+                    <button
+                      onClick={() => updateConvStatus(selected.id, "EM_ANALISE")}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/50"
+                    >
+                      <ArchiveX className="size-3.5 shrink-0 text-muted-foreground" />
+                      <span className="truncate font-medium">Desarquivar</span>
+                    </button>
+                  )}
+                  {["OWNER","ADMIN","GESTOR"].includes(auth?.role ?? "") && selected.status !== "PARA_EXCLUIR" && (
+                    <button
+                      onClick={() => updateConvStatus(selected.id, "PARA_EXCLUIR")}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs text-amber-700 transition-colors hover:bg-amber-50"
+                    >
+                      <Trash2 className="size-3.5 shrink-0" />
+                      <span className="truncate font-medium">Marcar para excluir</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="py-8 text-center text-xs text-muted-foreground">Selecione uma conversa.</p>
+          )}
         </aside>
       </div>
     </div>
